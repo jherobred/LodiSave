@@ -28,6 +28,17 @@ LodiSave is a Windows tray app and a browser extension for Chrome and Edge. Righ
 
 Saves go to `Downloads\LodiSave`. If Windows Security's Controlled folder access protects Downloads, allow LodiSave under Ransomware protection.
 
+## Android
+
+The Android app in `android/` saves the same way, without a browser:
+
+- **Share** a link, photo or video to LodiSave from any app. Lodi floats up while it saves.
+- **The round home-screen widget** saves the link you copied in one tap.
+- Saves go to `Pictures/LodiSave`, `Movies/LodiSave` and `Music/LodiSave`, so the gallery shows them.
+- Separate video and audio are joined with Android's own MediaMuxer, so there's no FFmpeg here either.
+
+There's no APK release yet. YouTube doesn't work on Android, because YouTube now needs a JavaScript runtime that the app doesn't have yet. The Windows app saves YouTube links.
+
 ## Limits
 
 - DRM-protected video is refused. LodiSave doesn't decrypt.
@@ -50,6 +61,13 @@ cargo test --release --manifest-path app/Cargo.toml
 pwsh scripts/build-release.ps1
 ```
 
+The Android app needs JDK 17+, the Android SDK (platform 36) and Python 3.14 on the build machine, which Chaquopy uses to package the app's Python:
+
+```bash
+cd android
+./gradlew assembleDebug
+```
+
 `npm test` runs the extension on local fixture pages in Edge and checks every saved file against its original. The release script writes the installer, the portable app, the extension zip and `SHA256SUMS.txt` to `dist/`.
 
 | Folder | What |
@@ -57,6 +75,7 @@ pwsh scripts/build-release.ps1
 | `extension/` | Browser extension, Manifest V3, no dependencies |
 | `app/` | Tray app, Tauri 2 and Rust |
 | `installer/` | Setup and uninstaller, Rust and WebView2 |
+| `android/` | Android app, Kotlin, Compose and Chaquopy |
 | `fixtures/` | Test pages and the end-to-end check |
 | `brand/` | Icon sources and the script that renders them |
 
