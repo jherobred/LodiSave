@@ -17,6 +17,11 @@
 </div>
 <p>A frame from another site, like an embedded post:</p>
 <iframe id="embed" src="http://localhost:8788/frame.html" width="420" height="320"></iframe>
+<p>A post image with a chat window opened over part of it, like Messenger:</p>
+<div style="position: relative; display: inline-block">
+  <img id="under" src="media/large.jpg?under" style="display: block; width: 320px; height: 240px">
+  <div id="chat" hidden style="position: absolute; left: 120px; top: 60px; width: 240px; height: 220px; background: #242526; border-radius: 8px; color: #fff">chat</div>
+</div>
 <script>
   window.__pageClicks = 0;
   document.addEventListener('click', () => window.__pageClicks++, true);

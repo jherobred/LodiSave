@@ -106,12 +106,12 @@
   };
   function mediaAt(x, y) {
     for (const el of document.elementsFromPoint(x, y).slice(0, 12)) {
-      if (el !== host && isMedia(el) && big(el.getBoundingClientRect())) return el;
+      if (el !== host && isMedia(el) && big(el.getBoundingClientRect()) && !covered(el, x, y)) return el;
     }
     let found = null, area = Infinity;
     for (const el of document.querySelectorAll('img,video,canvas')) {
       const r = el.getBoundingClientRect();
-      if (big(r) && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom && r.width * r.height < area) {
+      if (big(r) && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom && r.width * r.height < area && !covered(el, x, y)) {
         found = el;
         area = r.width * r.height;
       }
@@ -119,11 +119,30 @@
     return found;
   }
 
+  // Whether something drawn over el at (x, y) hides it, like a Messenger chat window or a menu. Clear
+  // click catchers (Instagram), small badges and dimming layers don't count.
+  const alpha = (c) => { const m = c.match(/[\d.]+/g); return m?.length === 4 ? +m[3] : c === 'transparent' ? 0 : 1 };
+  function covered(el, x, y) {
+    const r = el.getBoundingClientRect(), area = r.width * r.height;
+    for (const e of document.elementsFromPoint(x, y)) {
+      if (e === el || e.contains(el)) return false; // reached el, or what's painted behind it
+      if (e === host) continue;
+      const b = e.getBoundingClientRect();
+      if (b.width * b.height < area / 4) continue;
+      const s = getComputedStyle(e);
+      if (alpha(s.backgroundColor) >= 0.6 || /url\(/.test(s.backgroundImage) || /^(img|video|canvas)$/.test(e.localName)) return true;
+    }
+    return false;
+  }
+  // Hidden, see-through, or under another layer at its middle: no ring or checkbox.
+  const hidden = (el, b) => !el.checkVisibility({ opacityProperty: true, visibilityProperty: true }) || covered(el, b.left + b.width / 2, b.top + b.height / 2);
+  const bgOf = (el) => /url\(["']?(.*?)["']?\)/.exec(getComputedStyle(el).backgroundImage)?.[1] || '';
+
   // Keyed by what gets saved, not by element: sites like Instagram rebuild their elements when you go
   // back, so a pick follows its media to the new element instead of being picked a second time.
   const picked = new Map(); // item.url -> { item, el, src, thumb }
   let hovered = null; // { el, item }
-  const srcOf = (el) => el.currentSrc || el.src || '';
+  const srcOf = (el) => el.currentSrc || (typeof el.src === 'string' && el.src) || (/^(img|video)$/.test(el.localName) ? '' : bgOf(el));
   const shows = (p) => p.el.isConnected && (!p.src || srcOf(p.el) === p.src);
   const pickOf = (el) => [...picked.values()].find((p) => p.el === el && shows(p));
 
@@ -138,7 +157,7 @@
         c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
         return c.toDataURL('image/jpeg', 0.7); // throws on a cross-origin video, which gets a plain tile
       }
-      return /url\(["']?(.*?)["']?\)/.exec(getComputedStyle(el).backgroundImage)?.[1] || '';
+      return bgOf(el);
     } catch { return '' }
   }
 
@@ -188,7 +207,7 @@
     rebind();
     for (const p of picked.values()) {
       const el = p.el, b = shows(p) && boxOf(el);
-      if (!b) continue;
+      if (!b || hidden(el, b)) continue;
       let slot = pool[n];
       if (!slot) {
         slot = { ring: Object.assign(document.createElement('div'), { className: 'ring' }), box: Object.assign(document.createElement('button'), { className: 'check on', type: 'button', innerHTML: CHECK }) };
@@ -205,7 +224,8 @@
     }
     for (const slot of pool.slice(n)) { slot.ring.remove(); slot.box.remove(); slot.el = null }
 
-    const h = prefs.hover && hovered && !pickOf(hovered.el) && boxOf(hovered.el);
+    let h = prefs.hover && hovered && !pickOf(hovered.el) && boxOf(hovered.el);
+    if (h && !hovered.el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) h = null;
     if (h) {
       const lock = !!hovered.item?.unsupported;
       hoverBox.className = lock ? 'check lock' : 'check';
@@ -217,7 +237,10 @@
       if (!hoverBox.isConnected) layer.append(hoverBox);
     } else hoverBox.remove();
     if (n || h) schedule();
+    // Picks that are hidden now (a chat window over them, another tab of the app) come back on their own.
+    else if (picked.size) { clearTimeout(idle); idle = setTimeout(schedule, 250) }
   }
+  let idle = 0;
 
   // Positions follow scrolling and layout changes while anything is on screen.
   let frame = 0;
@@ -228,7 +251,7 @@
     moved = false;
     if (!prefs.hover) return;
     const r = hovered?.el.isConnected && hovered.el.getBoundingClientRect();
-    if (r && px >= r.left && px <= r.right && py >= r.top && py <= r.bottom) return;
+    if (r && px >= r.left && px <= r.right && py >= r.top && py <= r.bottom && !covered(hovered.el, px, py)) return;
     const el = mediaAt(px, py);
     if (el !== hovered?.el) {
       hovered = el ? { el, item: globalThis.__lodiItemFor(el) } : null;

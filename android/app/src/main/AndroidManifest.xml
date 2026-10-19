@@ -27,6 +27,7 @@
         <!-- Share a link, photo or video to LodiSave. The widget opens this too. -->
         <activity
             android:name=".ShareActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:excludeFromRecents="true"
             android:exported="true"
             android:label="@string/share_label"

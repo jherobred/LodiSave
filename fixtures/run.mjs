@@ -375,6 +375,27 @@ await check('Hover picker: tick 3, save at once', 'in-page UI', async () => {
   return '3 originals saved at once (overlay and cross-site frame included), slow press ticks, rebuilt photo stays picked once, icon skipped, no click reached the page';
 });
 
+await check('Hover picker: media under a chat window', 'in-page UI', async () => {
+  const { page } = await open('picker');
+  await page.locator('#under').scrollIntoViewIfNeeded();
+  const b = await page.locator('#under').boundingBox();
+  const unpicked = page.locator('lodisave-picker .check:not(.on)'), on = page.locator('lodisave-picker .check.on');
+  await page.evaluate(() => { document.querySelector('#chat').hidden = false });
+  await page.mouse.move(b.x + 30, b.y + 30, { steps: 4 });
+  await unpicked.waitFor({ timeout: 3000 });
+  await page.mouse.move(b.x + 200, b.y + 150, { steps: 4 }); // onto the chat, still inside the image's box
+  await unpicked.waitFor({ state: 'detached', timeout: 3000 }).catch(() => { throw new Error('the checkbox stayed while over the chat window') });
+  await page.mouse.move(b.x + 30, b.y + 30, { steps: 4 });
+  await unpicked.click({ delay: 150 });
+  await page.locator('lodisave-picker .bar .text', { hasText: '1 picked' }).waitFor({ timeout: 3000 });
+  await page.waitForTimeout(300);
+  if (await on.count()) throw new Error('the ring shows over the chat window');
+  await page.evaluate(() => { document.querySelector('#chat').hidden = true });
+  await on.first().waitFor({ timeout: 3000 });
+  await page.close();
+  return 'no checkbox over the chat, and the ring hides under it and returns when it closes';
+});
+
 await check('YouTube refused', 'service worker', async () => {
   const a = await save(1, { url: 'https://rr1---sn.googlevideo.com/videoplayback?id=1', kind: 'video', via: 'network', page: 'https://example.com/' });
   const b = await save(1, { url: 'https://example.com/a.jpg', kind: 'image', via: 'img', page: 'https://www.youtube.com/watch?v=x' });

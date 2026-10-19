@@ -36,6 +36,19 @@ def code_for(message):
     return message.split('ERROR:')[-1].strip()[:300] or 'nothing'
 
 
+def unwrap(url):
+    """The real link inside a redirect wrapper, like the l.facebook.com links Messenger and Facebook
+    hand out when you copy a shared link."""
+    p = urllib.parse.urlparse(url)
+    host = (p.hostname or '').lower()
+    if re.fullmatch(r'(l|lm)\.(facebook|instagram|messenger)\.com', host) or (re.fullmatch(r'(www\.)?google\.[a-z.]+', host) and p.path == '/url'):
+        q = urllib.parse.parse_qs(p.query)
+        inner = (q.get('u') or q.get('q') or q.get('url') or [''])[0]
+        if re.match(r'https?://', inner):
+            return unwrap(inner)
+    return url
+
+
 def pick(info):
     """(video, audio) format ids to join, (combined, None), or None to let yt-dlp choose. The same
     choice as the Windows app (app/src/links.rs): one file with sound if the site has one at the best
@@ -184,7 +197,7 @@ def video(yt_dlp, url, out_dir, progress, fmt=None):
 
 
 def save(url, out_dir, ytdlp_zip, progress, fmt=None):
-    url = url.strip()
+    url = unwrap(url.strip())
     try:
         if not re.match(r'https?://\S+$', url):
             raise Failure('nothing')
@@ -228,4 +241,7 @@ if __name__ == '__main__':
     assert code_for('ERROR: [Instagram] x: Requested content is not available, rate-limit reached or login required') == 'login'
     assert code_for('ERROR: Unsupported URL: https://x.test/') == 'nothing'
     assert json.loads(save('not a link', '.', '', None)) == {'error': 'nothing'}
+    assert unwrap('https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.tiktok.com%2F%40a%2Fvideo%2F1%3Fx%3D1&h=AT0') == 'https://www.tiktok.com/@a/video/1?x=1'
+    assert unwrap('https://www.google.com/url?q=https://x.com/a/status/1&sa=D') == 'https://x.com/a/status/1'
+    assert unwrap('https://www.facebook.com/reel/1?u=https://evil.test/') == 'https://www.facebook.com/reel/1?u=https://evil.test/'
     print('lodi.py checks: ok')

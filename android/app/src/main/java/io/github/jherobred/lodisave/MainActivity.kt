@@ -42,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -71,22 +72,23 @@ import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val clip = mutableStateOf<String?>(null)
+    private val focus = mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { LodiTheme { Home(clip.value) } }
+        setContent { LodiTheme { Home(clip.value, focus.intValue) } }
     }
 
     // Android shares the clipboard only with the app in focus, so check it each time LodiSave gets focus.
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) clip.value = copiedLink(this)
+        if (hasFocus) { clip.value = copiedLink(this); focus.intValue++ }
     }
 }
 
 @Composable
-private fun Home(clip: String?) {
+private fun Home(clip: String?, focus: Int) {
     val ctx = LocalContext.current
     val t = LocalTokens.current
     val prefs = remember { Prefs(ctx) }
@@ -102,7 +104,8 @@ private fun Home(clip: String?) {
     val info by flow.collectAsState(null)
     val job = if (jobId == null) Job.Idle else info.toJob()
     var recent by remember { mutableStateOf(emptyList<Saved>()) }
-    LaunchedEffect(job is Job.Done) { recent = withContext(Dispatchers.IO) { Saver.recent(ctx) } }
+    // Again on each return, for saves made from the share card or the widget meanwhile.
+    LaunchedEffect(job is Job.Done, focus) { recent = withContext(Dispatchers.IO) { Saver.recent(ctx) } }
 
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     fun save(url: String) {

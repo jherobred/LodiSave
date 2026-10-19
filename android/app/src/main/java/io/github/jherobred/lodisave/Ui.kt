@@ -54,7 +54,8 @@ fun copiedLink(ctx: Context): String? {
     return LINK.find(text)?.value
 }
 
-val LINK = Regex("""https?://[^\s"'<>]+""")
+// Not the punctuation that ends a sentence around a link in a chat: "look https://x.com/a/status/1)."
+val LINK = Regex("""https?://[^\s"'<>]*[^\s"'<>.,;:!?)\]}]""")
 
 fun short(url: String) = url.removePrefix("https://").removePrefix("http://").removePrefix("www.")
 
