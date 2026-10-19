@@ -7,7 +7,6 @@ Kotlin calls save(url, out_dir, ytdlp_zip, progress, fmt) and gets back JSON: {"
 join, or {"error": code}. Codes the app translates: login, nothing, offline. Anything else is
 yt-dlp's own message. Run this file with Python 3 to check the pure parts.
 """
-import copy
 import html
 import json
 import os
@@ -123,10 +122,12 @@ def image(url, out_dir, progress):
         raise Failure('nothing')
     shown = urllib.parse.urljoin(url, shown)
     progress.report('saving', -1.0)
+    refused = False
     for src in dict.fromkeys(filter(None, [upgrade(shown), shown])):
         try:
             data, kind = get(src, referer=url)
         except Exception:
+            refused = True  # rate limits and blocks: the image is there, the site won't send it
             continue
         if kind in IMAGE_TYPES:
             stem = os.path.splitext(os.path.basename(urllib.parse.urlparse(src).path))[0]
@@ -134,7 +135,7 @@ def image(url, out_dir, progress):
             with open(path, 'wb') as f:
                 f.write(data)
             return [path]
-    raise Failure('nothing')
+    raise Failure('offline' if refused else 'nothing')
 
 
 def video(yt_dlp, url, out_dir, progress, fmt=None):
@@ -162,7 +163,9 @@ def video(yt_dlp, url, out_dir, progress, fmt=None):
             opts['format'] = chosen
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
-                done = ydl.process_ie_result(copy.deepcopy(info), download=True)
+                # Drop yt-dlp's own earlier pick (requested_formats and friends), as its command line
+                # does for --load-info-json, so `chosen` is what downloads.
+                done = ydl.process_ie_result(yt_dlp.YoutubeDL.sanitize_info(info, remove_private_keys=True), download=True)
         except yt_dlp.utils.DownloadError as e:
             raise Failure(code_for(str(e)))
         files = [d.get('filepath') for d in done.get('requested_downloads') or []]
