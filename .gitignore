@@ -1,0 +1,10 @@
+node_modules/
+target/
+dist/
+app/gen/
+fixtures/media/
+design/
+.env*
+*.keystore
+*.jks
+*.log
