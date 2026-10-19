@@ -1,0 +1,37 @@
+[package]
+name = "lodisave"
+version = "0.1.0"
+description = "Save the images and videos that sites block you from saving."
+authors = ["LodiSave contributors"]
+license = "MIT"
+repository = "https://github.com/jherobred/LodiSave"
+edition = "2024"
+rust-version = "1.90"
+
+[features]
+default = ["custom-protocol"]
+# Serves the bundled ui/ folder. Plain `cargo build` needs it on, as `tauri build` would.
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+arboard = { version = "3", default-features = false, features = ["image-data"] }
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2.12", features = ["tray-icon", "image-png", "protocol-asset"] }
+tauri-plugin-autostart = "2.6"
+tauri-plugin-global-shortcut = "2.4"
+tauri-plugin-opener = "2.6"
+tauri-plugin-single-instance = "2.5"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_System_DataExchange", "Win32_System_SystemInformation", "Win32_Foundation"] }
+
+[profile.release]
+codegen-units = 4
+lto = "thin"
+opt-level = "s"
+strip = true

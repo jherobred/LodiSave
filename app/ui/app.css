@@ -1,0 +1,174 @@
+@font-face { font-family: Geist; src: url(fonts/Geist.woff2) format('woff2'); font-weight: 100 900; font-display: block }
+@font-face { font-family: 'Geist Mono'; src: url(fonts/GeistMono.woff2) format('woff2'); font-weight: 100 900; font-display: block }
+
+:root {
+  color-scheme: light;
+  --surface: #FFFFFF; --soft: #EFEEEB; --line: #E3E1DD; --ink: #151413; --muted: #6B6964;
+  --accent: #B84C0C; --accent-ink: #FFFFFF; --pick: #C98E52; --ok: #1A7F4B; --bad: #C2362B;
+  --glow: rgba(184, 76, 12, .18); --shadow: 0 8px 22px rgba(0, 0, 0, .16);
+  /* Springs from the design kit: Float k200 c15, Drift k140 c17, Snap k900 c56. */
+  --float: linear(0,0.034,0.119,0.236,0.373,0.515,0.649,0.774,0.883,0.969,1.038,1.088,1.119,1.135,1.139,1.134,1.121,1.104,1.086,1.066,1.047,1.03,1.015,1.003,0.994,0.987,0.983,0.981,0.981,0.982,0.983,0.986,0.988,0.991,0.994,1);
+  --drift: linear(0,0.021,0.073,0.146,0.232,0.324,0.417,0.508,0.594,0.672,0.745,0.806,0.859,0.903,0.94,0.969,0.992,1.009,1.022,1.031,1.036,1.038,1.038,1.037,1.035,1.032,1.029,1.025,1.021,1.018,1.015,1.012,1.009,1.007,1.005,1.003,1);
+  --snap: linear(0,0.058,0.182,0.32,0.459,0.582,0.681,0.764,0.829,0.876,0.913,0.94,0.959,0.972,0.982,0.988,0.993,1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --surface: #18181A; --soft: #202023; --line: #2C2C2F; --ink: #F4F3F1; --muted: #A3A19C;
+    --accent: #FF8A3D; --accent-ink: #0F0F10; --pick: #E8B37A; --ok: #3DD68C; --bad: #FF6B5E;
+    --glow: rgba(255, 138, 61, .22); --shadow: 0 8px 24px rgba(0, 0, 0, .55);
+  }
+}
+
+* { box-sizing: border-box }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden }
+body { color: var(--ink); font: 400 14px/1.4 Geist, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; user-select: none }
+button, input { font: inherit; color: inherit }
+button { cursor: pointer }
+button:disabled { cursor: default }
+:focus-visible { outline: 3px solid var(--pick); outline-offset: 2px }
+.still *, .still *::before, .still *::after { animation: none !important; transition: none !important }
+[hidden] { display: none !important }
+
+/* The window is 12 px bigger on each side so the panel's shadow fits. */
+.panel {
+  position: absolute; inset: 12px; display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 28px; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow);
+  transform-origin: 50% 100%;
+}
+.panel.in { animation: panel-in .678s var(--float) }
+@keyframes panel-in { from { opacity: 0; transform: translateY(18px) scale(.97) } }
+
+.head { display: flex; align-items: center; gap: 10px; padding: 16px 14px 8px 20px }
+.brand { flex: 1; font-size: 20px; font-weight: 700; letter-spacing: -.03em }
+.round {
+  width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--soft);
+  transition: transform .222s var(--snap);
+}
+.round:active, .chip:active, .ghost:active, .primary:active:not(:disabled) { transform: scale(.95) }
+
+/* Card */
+.card { margin: 8px 14px 0; padding: 14px; border-radius: 24px; background: var(--soft); display: flex; flex-direction: column; gap: 12px }
+.card.swap { animation: swap .632s var(--drift) }
+@keyframes swap { from { opacity: .4; transform: scale(.985) } }
+.who { display: flex; align-items: center; gap: 12px }
+.what { flex: 1; min-width: 0 }
+h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em }
+#card-sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere }
+.card[data-state="error"] #card-sub { -webkit-line-clamp: 4 }
+.card[data-state="link"] #card-sub, .card[data-state="done"] #card-sub { font: 400 12px 'Geist Mono', monospace; -webkit-line-clamp: 1; display: block; white-space: nowrap }
+.paste input {
+  width: 100%; min-height: 44px; padding: 0 18px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  font: 400 13px 'Geist Mono', monospace; user-select: text;
+}
+.paste input::placeholder { color: var(--muted); font-family: Geist, sans-serif; font-size: 14px }
+.paste input:focus { outline: 2px solid var(--pick); outline-offset: 1px }
+.card:not([data-state="idle"]) .paste { display: none }
+.meter { height: 10px; border-radius: 999px; background: var(--line); overflow: hidden; display: none }
+.card[data-state="working"] .meter { display: block }
+#meter-fill { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width .632s var(--drift) }
+.meter.wait #meter-fill { width: 32% !important; animation: wait 1.3s ease-in-out infinite alternate }
+@keyframes wait { from { transform: translateX(-30%) } to { transform: translateX(240%) } }
+.actions { display: flex; gap: 8px }
+.card[data-state="working"] .actions { display: none }
+.primary {
+  flex: 1; min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 999px;
+  background: var(--accent); color: var(--accent-ink); box-shadow: 0 8px 18px var(--glow); font-size: 15px; font-weight: 600;
+  transition: transform .222s var(--snap), opacity .222s var(--snap);
+}
+.primary:disabled { opacity: .5; box-shadow: none }
+.ghost {
+  min-height: 46px; padding: 0 20px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 15px; font-weight: 500;
+  transition: transform .222s var(--snap);
+}
+.ghost.small { min-height: 36px; padding: 0 16px; font-size: 14px }
+
+/* Lodi: one drawing, poses switch which face parts show. */
+.lodi { flex: none; overflow: visible }
+.lodi * { transform-box: fill-box }
+.lodi [data-p] { display: none }
+.lodi[data-pose="idle"] [data-p~="idle"], .lodi[data-pose="grab"] [data-p~="grab"], .lodi[data-pose="full"] [data-p~="full"],
+.lodi[data-pose="yay"] [data-p~="yay"], .lodi[data-pose="oops"] [data-p~="oops"] { display: inline }
+.fur { fill: url(#g-fur) #E8B37A } .fur2 { fill: url(#g-cheek) #F3CFA3 } .cream { fill: url(#g-cream) #FBEBD6 }
+.paw { fill: url(#g-paw) #F5C7AE } .pink { fill: #FF9A7E } .nose { fill: #EE7A6E } .ink { fill: #141414 } .hi { fill: #FFFFFF }
+.gloss { fill: #FFFFFF; opacity: .38 } .sweat { fill: #8FB6D6 }
+.line { fill: none; stroke: #141414; stroke-width: 3.4px; stroke-linecap: round; stroke-linejoin: round }
+.tuft { fill: none; stroke: #C98E52; stroke-width: 3.4px; stroke-linecap: round }
+.leaf { fill: #FF8A3D; transform-origin: 50% 50%; animation: leafy 2s infinite }
+.leaf.b { fill: #E8B37A; animation-delay: -.6s } .leaf.c { animation-delay: -1.2s }
+.bod { transform-origin: 50% 100%; animation: bob 3.6s ease-in-out infinite }
+.hop { transform-origin: 50% 100% }
+.hop.go { animation: hop .678s var(--float) }
+.blink { transform-origin: 50% 50%; animation: blink 4.4s infinite }
+.ear { transition: transform .678s var(--float) }
+.ear.l { transform-origin: 64% 86% } .ear.r { transform-origin: 36% 86% }
+.cheek { transition: transform .678s var(--float) }
+.cheek.l { transform-origin: 85% 50% } .cheek.r { transform-origin: 15% 50% }
+.paw.up { transform-origin: 50% 100%; animation: pop .678s var(--float) both }
+.sweat { animation: drip 2.6s ease-in infinite }
+.lodi[data-pose="full"] .cheek { transform: scale(1.48) }
+.lodi[data-pose="full"] .bod { animation: squish 2.4s ease-in-out infinite }
+.lodi[data-pose="yay"] .bod { animation: rise 2s 2 }
+.lodi[data-pose="oops"] .bod { animation: sway 2.6s ease-in-out infinite }
+.lodi[data-pose="oops"] .ear.l { transform: rotate(-24deg) } .lodi[data-pose="oops"] .ear.r { transform: rotate(24deg) }
+@keyframes bob { 50% { transform: translateY(-4px) } }
+@keyframes blink { 0%, 92%, 100% { transform: scaleY(1) } 95% { transform: scaleY(.1) } }
+@keyframes hop { from { transform: scale(1.08, .9) } }
+@keyframes pop { from { transform: scale(0) } }
+@keyframes squish { 0%, 100% { transform: scale(1.03, .97) } 50% { transform: scale(.98, 1.02) } }
+@keyframes rise {
+  0% { transform: none; animation-timing-function: var(--float) }
+  34% { transform: translateY(-14px) rotate(2deg) }
+  55% { transform: translateY(-14px) rotate(2deg); animation-timing-function: var(--drift) }
+  87%, 100% { transform: none }
+}
+@keyframes sway { 0%, 100% { transform: rotate(-3deg) } 50% { transform: rotate(3deg) } }
+@keyframes leafy {
+  0%, 20% { opacity: 0; transform: translateY(6px) scale(.5) }
+  40% { opacity: 1; transform: translateY(-6px) rotate(-20deg) }
+  80%, 100% { opacity: 0; transform: translateY(22px) rotate(50deg) scale(.9) }
+}
+@keyframes drip { 0% { transform: translateY(-4px); opacity: 0 } 20% { opacity: 1 } 100% { transform: translateY(12px); opacity: 0 } }
+
+/* Recent */
+.recent-head { display: flex; align-items: baseline; justify-content: space-between; margin: 16px 20px 8px }
+h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted) }
+.link { padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; font-weight: 600 }
+.recent { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: min-content; gap: 12px 10px; padding: 0 14px; align-content: start }
+.item { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 0; border: 0; background: none; text-align: left; animation: rise-in .632s var(--drift) both; animation-delay: calc(var(--i) * 40ms) }
+@keyframes rise-in { from { opacity: 0; transform: translateY(10px) scale(.96) } }
+.thumb { width: 100%; height: 78px; border-radius: 18px; overflow: hidden; background: var(--soft); display: grid; place-items: center; color: var(--muted); transition: transform .222s var(--snap) }
+.item:hover .thumb { transform: scale(1.03) }
+.item:active .thumb { transform: scale(.97) }
+.thumb img, .thumb video { width: 100%; height: 100%; object-fit: cover; display: block }
+.name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.meta { font: 400 11px 'Geist Mono', monospace; color: var(--muted) }
+.empty { grid-column: 1 / -1; margin: 6px 6px 0; color: var(--muted); font-size: 13px }
+
+/* Footer */
+.foot { padding: 12px 14px 16px; display: flex; align-items: center; gap: 10px }
+.chip {
+  min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 18px 0 14px; border: 0; border-radius: 999px;
+  background: var(--soft); font-size: 14px; font-weight: 600; transition: transform .222s var(--snap);
+}
+.keys { display: flex; gap: 4px; font: 500 11px 'Geist Mono', monospace }
+kbd { padding: 4px 9px; border-radius: 999px; background: var(--soft); font: inherit }
+
+/* Settings */
+.prefs {
+  width: 352px; margin: auto auto 16px; padding: 20px; border: 1px solid var(--line); border-radius: 26px;
+  background: var(--surface); color: var(--ink); box-shadow: 0 16px 40px rgba(0, 0, 0, .35);
+}
+.prefs[open] { animation: rise-in .678s var(--float) }
+.prefs::backdrop { background: transparent }
+.prefs h2 { margin: 0 0 14px; font-size: 20px; color: var(--ink); letter-spacing: -.03em }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; font-weight: 600 }
+.seg { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--soft) }
+.seg button { min-height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: none; font-weight: 600; transition: background-color .222s var(--snap), color .222s var(--snap) }
+.seg [aria-pressed="true"] { background: var(--accent); color: var(--accent-ink) }
+.ext { margin: 4px 0 12px; padding: 12px 14px; border-radius: 18px; background: var(--soft) }
+.ext .row { margin: 0 }
+.ext .ghost { background: var(--surface) }
+.hint { margin: 8px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.4 }
+.about { margin: 0 0 14px; color: var(--muted); font: 400 12px 'Geist Mono', monospace }
+.primary.wide { width: 100%; min-height: 44px; box-shadow: none }

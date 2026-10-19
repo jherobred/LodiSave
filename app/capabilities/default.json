@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The tray panel only listens for events. Everything else goes through LodiSave's own commands.",
+  "windows": ["panel"],
+  "permissions": ["core:default"]
+}
