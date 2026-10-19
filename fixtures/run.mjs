@@ -338,10 +338,18 @@ await check('Hover picker: tick 3, save at once', 'in-page UI', async () => {
     await hover(frame.locator(selector));
     const box = frame.locator('lodisave-picker .check:not(.on)');
     await box.waitFor({ timeout: 5000 });
-    await box.click();
-    await frame.locator('lodisave-picker .check.on').first().waitFor();
+    await box.click({ delay: 150 }); // a human-length press, spanning several repaints
+    await frame.locator('lodisave-picker .check.on').first().waitFor({ timeout: 3000 });
   };
   await tick(page, '#one img');
+  // Like Instagram after going back: the page rebuilds the picked photo. The pick follows it, and
+  // ticking it again can't count it twice.
+  await page.evaluate(() => { const i = document.querySelector('#one img'); i.replaceWith(i.cloneNode()) });
+  await page.locator('lodisave-picker .check.on').first().waitFor({ timeout: 3000 });
+  await hover(page.locator('#one img'));
+  await page.waitForTimeout(300);
+  if (await page.locator('lodisave-picker .check:not(.on)').count()) throw new Error('the rebuilt photo shows as not picked');
+  await page.locator('lodisave-picker .bar .text', { hasText: '1 picked' }).waitFor({ timeout: 3000 });
   await tick(page, '#two img'); // under a clear overlay, like Instagram
   await hover(page.locator('#icon'));
   await page.waitForTimeout(400);
@@ -355,14 +363,16 @@ await check('Hover picker: tick 3, save at once', 'in-page UI', async () => {
   await bar.locator('.save').click();
   await page.waitForFunction(() => document.querySelector('lodisave-picker')?.dataset.state === 'done', null, { timeout: 20000 });
   const text = await bar.locator('.text').textContent();
+  const tiles = await bar.locator('.tray .t').count();
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'picker-done.png') });
   await page.close();
   if (!text.startsWith('Saved 3!')) throw new Error(`the bar says "${text}"`);
+  if (tiles !== 3) throw new Error(`the saving tray showed ${tiles} tiles`);
   const files = await sw.evaluate((t) => chrome.downloads.search({ startedAfter: t, state: 'complete' }).then((d) => d.map((x) => x.filename)), since);
   const got = files.map((f) => sha(fs.readFileSync(f))).sort().join();
   const want = ['a.jpg', 'large.jpg', 'a.jpg'].map((f) => sha(original(f))).sort().join();
   if (got !== want) throw new Error(`saved ${files.length} files that don't match the three originals`);
-  return '3 originals saved in one go (overlay and cross-site frame included), icon skipped, no click reached the page';
+  return '3 originals saved at once (overlay and cross-site frame included), slow press ticks, rebuilt photo stays picked once, icon skipped, no click reached the page';
 });
 
 await check('YouTube refused', 'service worker', async () => {

@@ -51,7 +51,7 @@ function finished(id) {
 
 async function saveUrl(url, filename) {
   try {
-    const id = await chrome.downloads.download({ url, filename: 'LodiSave/' + filename, conflictAction: 'uniquify' });
+    const id = await chrome.downloads.download({ url, filename: 'LodiSave/' + filename, conflictAction: 'uniquify', saveAs: false });
     const it = await finished(id);
     return it.state === 'complete' ? { ok: true, id, filename: it.filename, bytes: it.fileSize } : { error: `Download failed: ${it.error}`, code: it.error, id };
   } catch (e) {
@@ -158,12 +158,20 @@ async function savePicked(tabId, frames) {
     const got = await chrome.tabs.sendMessage(tabId, { type: 'take-picked' }, { frameId }).catch(() => []);
     for (const it of got || []) items.push({ ...it, frameId });
   }
-  let ok = 0, bad = 0, warn = 0, last = null;
-  for (const [i, it] of items.entries()) {
-    chrome.tabs.sendMessage(tabId, { type: 'bar-progress', i: i + 1, n: items.length }, { frameId: 0 }).catch(() => {});
-    const r = await save(tabId, it);
-    if (r.ok) { ok++; last = r.id; if (r.warning) warn++ } else bad++;
-  }
+  const bar = (msg) => chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }).catch(() => {});
+  bar({ type: 'bar-start', thumbs: items.map((it) => (/^(https?|data|blob):/.test(it.thumb || '') ? it.thumb : '')) });
+  // All at once, a few downloads at a time, each reported as it lands.
+  let ok = 0, bad = 0, warn = 0, last = null, next = 0;
+  const lane = async () => {
+    while (next < items.length) {
+      const i = next++;
+      const { thumb, ...it } = items[i];
+      const r = await save(tabId, it);
+      if (r.ok) { ok++; last = r.id; if (r.warning) warn++ } else bad++;
+      bar({ type: 'bar-item', i, ok: !!r.ok });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, lane));
   chrome.tabs.sendMessage(tabId, { type: 'clear-picked' }).catch(() => {});
   return { ok, bad, warn, last };
 }
