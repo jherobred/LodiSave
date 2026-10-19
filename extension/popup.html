@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>LodiSave</title>
+<link rel="stylesheet" href="popup.css">
+<header class="top">
+  <div class="heading">
+    <h1 id="title">Looking…</h1>
+    <p id="sub"></p>
+  </div>
+  <svg class="lodi" id="lodi" data-pose="idle" viewBox="0 0 160 160" width="84" height="84" aria-hidden="true">
+    <defs>
+      <radialGradient id="g-fur" cx=".38" cy=".3" r=".78"><stop offset="0" stop-color="#F8DDB8"/><stop offset=".55" stop-color="#E8B37A"/><stop offset="1" stop-color="#C98E52"/></radialGradient>
+      <radialGradient id="g-cheek" cx=".4" cy=".35" r=".7"><stop offset="0" stop-color="#FFEFD8"/><stop offset="1" stop-color="#F3CFA3"/></radialGradient>
+      <linearGradient id="g-cream" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFAF2"/><stop offset="1" stop-color="#FBEBD6"/></linearGradient>
+      <radialGradient id="g-paw" cx=".4" cy=".35" r=".75"><stop offset="0" stop-color="#FFEDE3"/><stop offset="1" stop-color="#F5C7AE"/></radialGradient>
+    </defs>
+    <g data-p="yay">
+      <g transform="translate(20 34)"><path class="leaf" d="M-8 8C-8 -2 -2 -8 8 -8C8 2 2 8 -8 8Z"/></g>
+      <g transform="translate(140 28)"><path class="leaf b" d="M-6 6C-6 -1.5 -1.5 -6 6 -6C6 1.5 1.5 6 -6 6Z"/></g>
+      <g transform="translate(148 96)"><path class="leaf c" d="M-7 7C-7 -1.8 -1.8 -7 7 -7C7 1.8 1.8 7 -7 7Z"/></g>
+    </g>
+    <g class="hop">
+      <g class="bod">
+        <g class="ear l"><circle class="fur" cx="46" cy="44" r="14"/><circle class="pink" cx="47" cy="46" r="7"/></g>
+        <g class="ear r"><circle class="fur" cx="114" cy="44" r="14"/><circle class="pink" cx="113" cy="46" r="7"/></g>
+        <ellipse class="paw" cx="56" cy="139" rx="12" ry="6"/><ellipse class="paw" cx="104" cy="139" rx="12" ry="6"/>
+        <g data-p="yay"><ellipse class="paw up" cx="20" cy="66" rx="9.5" ry="8"/><ellipse class="paw up" cx="140" cy="66" rx="9.5" ry="8"/></g>
+        <path class="fur" d="M80 36C112 36 136 60 138 94C140 122 116 140 80 140C44 140 20 122 22 94C24 60 48 36 80 36Z"/>
+        <ellipse class="gloss" cx="58" cy="56" rx="17" ry="8" transform="rotate(-28 58 56)"/><path class="tuft" d="M74 38Q79 27 87 34"/>
+        <path class="cream" d="M50 112C50 94 63 86 80 86C97 86 110 94 110 112C110 128 97 138 80 138C63 138 50 128 50 112Z"/>
+        <g class="cheek l"><ellipse class="fur2" cx="44" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="44" cy="95" rx="7" ry="4.5"/></g>
+        <g class="cheek r"><ellipse class="fur2" cx="116" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="116" cy="95" rx="7" ry="4.5"/></g>
+        <g data-p="idle" class="blink"><circle class="ink" cx="62" cy="80" r="8.5"/><circle class="ink" cx="98" cy="80" r="8.5"/><circle class="hi" cx="65" cy="76.5" r="3.2"/><circle class="hi" cx="101" cy="76.5" r="3.2"/><circle class="hi" cx="59.5" cy="83.5" r="1.3"/><circle class="hi" cx="95.5" cy="83.5" r="1.3"/></g>
+        <g data-p="grab" transform="translate(0 2.5)"><circle class="ink" cx="62" cy="80" r="8.5"/><circle class="ink" cx="98" cy="80" r="8.5"/><circle class="hi" cx="63.5" cy="79" r="3.2"/><circle class="hi" cx="99.5" cy="79" r="3.2"/></g>
+        <g data-p="full yay"><path class="line" d="M54 82Q62 72.5 70 82"/><path class="line" d="M90 82Q98 72.5 106 82"/></g>
+        <g data-p="oops"><circle class="ink" cx="62" cy="81" r="8"/><circle class="ink" cx="98" cy="81" r="8"/><circle class="hi" cx="64.8" cy="78" r="3"/><circle class="hi" cx="100.8" cy="78" r="3"/><path class="line" d="M53 69L68 65M107 69L92 65"/></g>
+        <path class="nose" d="M75.5 92.5Q80 90 84.5 92.5Q82.5 96.5 80 97Q77.5 96.5 75.5 92.5Z"/>
+        <path data-p="idle" class="line" d="M72.5 100Q76.25 104 80 100.5Q83.75 104 87.5 100"/>
+        <g data-p="grab"><ellipse class="ink" cx="80" cy="103" rx="5" ry="4.5"/><ellipse class="pink" cx="80" cy="105.5" rx="3" ry="1.8"/></g>
+        <path data-p="full" class="line" d="M74.5 100Q77.25 103 80 100.5Q82.75 103 85.5 100"/>
+        <g data-p="yay"><path class="ink" d="M71 100.5Q80 99 89 100.5Q87 112 80 112Q73 112 71 100.5Z"/><ellipse class="pink" cx="80" cy="108" rx="4.2" ry="2.4"/></g>
+        <path data-p="oops" class="line" d="M73 106Q80 99.5 87 106"/>
+        <ellipse class="paw" cx="67" cy="122" rx="9.5" ry="7.5"/><ellipse class="paw" cx="93" cy="122" rx="9.5" ry="7.5"/>
+        <path data-p="oops" class="sweat" d="M136 44C136 44 129 53 129 57C129 61 132.5 63.5 136 63.5C139.5 63.5 143 61 143 57C143 53 136 44 136 44Z"/>
+      </g>
+    </g>
+  </svg>
+</header>
+<nav class="bar">
+  <div class="tabs" role="tablist" id="tabs">
+    <button type="button" role="tab" data-f="all" aria-selected="true"></button>
+    <button type="button" role="tab" data-f="image" aria-selected="false"></button>
+    <button type="button" role="tab" data-f="video" aria-selected="false"></button>
+  </div>
+  <button type="button" class="round" id="open-prefs" data-label="settings">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+  </button>
+</nav>
+<main class="grid" id="grid"></main>
+<footer class="foot">
+  <button type="button" class="primary" id="primary">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+    <span id="primary-text"></span>
+  </button>
+  <p class="note" id="note" aria-live="polite"></p>
+</footer>
+<dialog class="prefs" id="prefs">
+  <h2 data-t="settings"></h2>
+  <p class="row"><span data-t="language"></span>
+    <span class="seg" data-pref="lang"><button type="button" data-v="en">English</button><button type="button" data-v="tl">Taglish</button></span>
+  </p>
+  <p class="row"><span data-t="motion"></span>
+    <span class="seg" data-pref="motion"><button type="button" data-v="on" data-t="motionOn"></button><button type="button" data-v="off" data-t="motionOff"></button></span>
+  </p>
+  <p class="row"><span data-t="hover"></span>
+    <span class="seg" data-pref="hover"><button type="button" data-v="on" data-t="motionOn"></button><button type="button" data-v="off" data-t="motionOff"></button></span>
+  </p>
+  <p class="hint" data-t="hoverHint"></p>
+  <button type="button" class="primary small" id="close-prefs" data-t="close"></button>
+</dialog>
+<script src="popup.js"></script>
+</html>
