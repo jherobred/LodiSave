@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Finder coverage</title>
+<meta property="og:image" content="media/large.jpg?og">
+<meta property="og:video" content="https://www.youtube.com/embed/dQw4w9WgXcQ">
+<p>One of each source the finder must list. The YouTube og:video must not show up.</p>
+<img src="media/small.jpg?srcset" srcset="media/small.jpg?srcset 400w, media/large.jpg?srcset 1600w" sizes="200px" width="200">
+<picture>
+  <source srcset="media/large.jpg?picture 1600w, media/small.jpg?picture 400w" type="image/jpeg">
+  <img src="media/small.jpg?pictureimg" width="200">
+</picture>
+<div id="host"></div>
+<iframe src="frame.html" width="420" height="320"></iframe>
+<svg width="120" height="120" viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" fill="#f6a"/></svg>
+<svg width="200" height="150"><image href="media/a.jpg?svgimage" width="200" height="150"/></svg>
+<a href="media/large.jpg?link">Full size</a>
+<video src="media/clip.webm?progressive" poster="media/b.png?poster" width="320" height="180" muted></video>
+<script>
+  document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<img src="media/a.jpg?shadow" width="200">';
+  new Image().src = 'media/a.jpg?jsonly';
+  addEventListener('load', () => (window.__ready = true));
+</script>

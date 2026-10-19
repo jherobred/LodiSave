@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Partly buffered stream</title>
+<p>The player has only buffered the start of the video, so a save holds only that part. LodiSave must say so.</p>
+<video id="target" width="320" height="180" muted></video>
+<script>
+  (async () => {
+    const buf = new Uint8Array(await (await fetch('media/clip.webm')).arrayBuffer());
+    const ms = new MediaSource(), v = document.getElementById('target');
+    v.src = URL.createObjectURL(ms);
+    await new Promise((r) => ms.addEventListener('sourceopen', r, { once: true }));
+    const sb = ms.addSourceBuffer('video/webm; codecs="vp9"');
+    sb.appendBuffer(buf.subarray(0, Math.ceil(buf.length / 3)));
+    await new Promise((r) => sb.addEventListener('updateend', r, { once: true }));
+    performance.clearResourceTimings();
+    window.__ready = true;
+  })().catch((e) => (window.__error = String(e)));
+</script>

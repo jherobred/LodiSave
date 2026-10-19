@@ -1,0 +1,30 @@
+<!doctype html>
+<html data-lodisave-cap="120000">
+<meta charset="utf-8">
+<title>Memory cap</title>
+<p>Three players in a row with a 120 KB capture cap. The first one has finished, so its capture is freed to fit the third.</p>
+<script>
+  (async () => {
+    const buf = new Uint8Array(await (await fetch('media/clip.webm')).arrayBuffer());
+    const play = async () => {
+      const v = document.createElement('video'), ms = new MediaSource();
+      document.body.append(v);
+      v.src = URL.createObjectURL(ms);
+      await new Promise((r) => ms.addEventListener('sourceopen', r, { once: true }));
+      const sb = ms.addSourceBuffer('video/webm; codecs="vp9"');
+      sb.appendBuffer(buf);
+      await new Promise((r) => sb.addEventListener('updateend', r, { once: true }));
+      return { v, ms };
+    };
+    const first = await play();
+    const closed = new Promise((r) => first.ms.addEventListener('sourceclose', r, { once: true }));
+    first.v.removeAttribute('src');
+    first.v.load();
+    await closed;
+    await play();
+    await play();
+    performance.clearResourceTimings();
+    window.__ready = true;
+  })().catch((e) => (window.__error = String(e)));
+</script>
+</html>

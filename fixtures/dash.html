@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DASH stream</title>
+<p>A DASH player loads a manifest with separate video and audio, numbered segments and a SegmentTimeline.</p>
+<script>
+  (async () => {
+    await (await fetch('http://localhost:8788/media/dash/manifest.mpd')).text();
+    performance.clearResourceTimings();
+    window.__ready = true;
+  })().catch((e) => (window.__error = String(e)));
+</script>

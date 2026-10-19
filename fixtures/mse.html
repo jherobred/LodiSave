@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>MediaSource blob video</title>
+<p>The video plays from a MediaSource blob: URL, the way most streaming players work. "Save video as" can't save it.</p>
+<video id="target" width="320" height="180" muted controls></video>
+<script>
+  (async () => {
+    const buf = new Uint8Array(await (await fetch('media/clip.webm')).arrayBuffer());
+    const ms = new MediaSource(), v = document.getElementById('target');
+    v.src = URL.createObjectURL(ms);
+    await new Promise((r) => ms.addEventListener('sourceopen', r, { once: true }));
+    const sb = ms.addSourceBuffer('video/webm; codecs="vp9"');
+    const step = Math.ceil(buf.length / 3);
+    for (let i = 0; i < buf.length; i += step) {
+      sb.appendBuffer(buf.subarray(i, i + step));
+      await new Promise((r) => sb.addEventListener('updateend', r, { once: true }));
+    }
+    ms.endOfStream();
+    performance.clearResourceTimings(); // the file must come from the MediaSource capture, not the network list
+    window.__ready = true;
+  })().catch((e) => (window.__error = String(e)));
+</script>

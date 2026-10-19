@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Revoked blob</title>
+<p>The image is shown from a blob: URL that the page revokes as soon as it loads, so the URL is dead by the time you right-click.</p>
+<img id="target" width="400" height="300">
+<script>
+  (async () => {
+    const blob = await (await fetch('media/a.jpg?blob')).blob();
+    const img = document.getElementById('target'), url = URL.createObjectURL(blob);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      performance.clearResourceTimings();
+      window.__ready = true;
+    };
+    img.src = url;
+  })().catch((e) => (window.__error = String(e)));
+</script>

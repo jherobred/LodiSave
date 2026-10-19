@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Right-click disabled</title>
+<body oncontextmenu="return false">
+<p>Right-click is blocked here, so a plain right-click shows no menu. Shift+right-click should still show it.</p>
+<img id="target" src="media/a.jpg?rightclick" width="400" height="300" draggable="false" style="user-select:none">
+<script>
+  window.__blocked = 0;
+  document.addEventListener('contextmenu', (e) => { e.preventDefault(); window.__blocked++ });
+  document.addEventListener('mousedown', (e) => { if (e.button === 2) e.preventDefault() });
+  addEventListener('load', () => (window.__ready = true));
+</script>
+</body>

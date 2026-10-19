@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DRM (EME)</title>
+<p>This stream has Encrypted Media Extensions keys attached. LodiSave must refuse it.</p>
+<video id="target" width="320" height="180" muted></video>
+<script>
+  (async () => {
+    const v = document.getElementById('target');
+    const buf = new Uint8Array(await (await fetch('media/clip.webm')).arrayBuffer());
+    const ms = new MediaSource();
+    v.src = URL.createObjectURL(ms);
+    await new Promise((r) => ms.addEventListener('sourceopen', r, { once: true }));
+    const sb = ms.addSourceBuffer('video/webm; codecs="vp9"');
+    sb.appendBuffer(buf);
+    await new Promise((r) => sb.addEventListener('updateend', r, { once: true }));
+    try {
+      const access = await navigator.requestMediaKeySystemAccess('org.w3.clearkey', [{
+        initDataTypes: ['webm'], videoCapabilities: [{ contentType: 'video/webm; codecs="vp9"' }],
+      }]);
+      await v.setMediaKeys(await access.createMediaKeys());
+      window.__drm = 'Clear Key';
+    } catch (e) {
+      v.dispatchEvent(new Event('encrypted'));
+      window.__drm = 'synthetic encrypted event (' + e.message + ')';
+    }
+    performance.clearResourceTimings();
+    window.__ready = true;
+  })().catch((e) => (window.__error = String(e)));
+</script>

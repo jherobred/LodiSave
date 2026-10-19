@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Hover picker</title>
+<style>
+  body { font: 14px system-ui; margin: 16px }
+  .feed { display: flex; gap: 16px; align-items: flex-start }
+  .post { position: relative; display: block }
+  .post img { display: block; width: 320px; height: 240px }
+  /* Like Instagram: a clear layer over the photo takes every click. */
+  .cover { position: absolute; inset: 0 }
+</style>
+<p>Hover each photo and tick its circle. Clicks on LodiSave's checkboxes must not reach the page.</p>
+<div class="feed">
+  <a class="post" id="one" href="#opened-one"><img src="media/a.jpg?picker"></a>
+  <a class="post" id="two" href="#opened-two"><img src="media/large.jpg?picker"><span class="cover"></span></a>
+  <img id="icon" src="media/c.png?icon" width="32" height="32">
+</div>
+<p>A frame from another site, like an embedded post:</p>
+<iframe id="embed" src="http://localhost:8788/frame.html" width="420" height="320"></iframe>
+<script>
+  window.__pageClicks = 0;
+  document.addEventListener('click', () => window.__pageClicks++, true);
+  window.__ready = true;
+</script>

@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Canvas</title>
+<p>Both pictures are drawn on canvas. The second comes from another origin, so its canvas is tainted and can't be read.</p>
+<canvas id="clean" width="640" height="360"></canvas>
+<canvas id="tainted" width="400" height="300"></canvas>
+<script>
+  const draw = (id, src) => new Promise((ok, fail) => {
+    const img = new Image();
+    img.onload = () => { document.getElementById(id).getContext('2d').drawImage(img, 0, 0); ok() };
+    img.onerror = fail;
+    img.src = src;
+  });
+  Promise.all([draw('clean', 'media/b.png?canvas'), draw('tainted', 'http://localhost:8788/media/a.jpg?taint')])
+    .then(() => {
+      performance.clearResourceTimings(); // sources must come from the drawImage hook, not the network list
+      window.__ready = true;
+    })
+    .catch((e) => (window.__error = String(e)));
+</script>

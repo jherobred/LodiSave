@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>HLS stream</title>
+<p>A player loads an HLS master playlist, its best variant and a first segment from another origin. No file URL ever appears in the page.</p>
+<video id="target" width="640" height="360" muted></video>
+<script>
+  const base = 'http://localhost:8788/media/hls/';
+  const xhr = (url) => new Promise((ok, fail) => {
+    const x = new XMLHttpRequest();
+    x.open('GET', url);
+    x.onload = () => ok(x.responseText);
+    x.onerror = fail;
+    x.send();
+  });
+  (async () => {
+    const master = await xhr(base + 'master.m3u8');                 // seen by the XHR hook
+    const variant = master.trim().split('\n').pop();
+    const media = await (await fetch(base + variant)).text();         // seen by the fetch hook
+    const first = media.split('\n').find((l) => l && !l.startsWith('#'));
+    await fetch(new URL(first, base + variant));
+    performance.clearResourceTimings(); // playlists must come from the hooks, not the network list
+    window.__ready = true;
+  })().catch((e) => (window.__error = String(e)));
+</script>

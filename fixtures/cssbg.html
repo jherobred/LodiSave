@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CSS background</title>
+<style>
+  #bg { position: relative; width: 640px; height: 360px; background: url(http://localhost:8788/media/b.png?cssbg) center / cover; }
+  #bg::after { content: ''; position: absolute; inset: 0; }
+  .ps::before { content: ''; display: block; width: 320px; height: 240px; background-image: url(media/c.png?pseudo); }
+</style>
+<p>No img tags. The first picture is a CSS background from another origin, under a pseudo-element overlay. The second is a ::before background.</p>
+<div id="bg"></div>
+<div class="ps" id="ps"></div>
+<script>addEventListener('load', () => (window.__ready = true))</script>

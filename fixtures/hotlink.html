@@ -1,0 +1,6 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Hotlink protection</title>
+<p>The image server returns 403 unless the Referer comes from this page's origin, like TikTok's video CDN.</p>
+<img id="target" src="http://localhost:8788/hotlink/a.jpg" width="400" height="300">
+<script>addEventListener('load', () => (window.__ready = true))</script>

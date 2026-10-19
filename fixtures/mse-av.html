@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>MediaSource video and audio tracks</title>
+<p>Like Instagram and Facebook: video and audio play through two separate MediaSource buffers.</p>
+<video id="target" width="320" height="180" muted controls></video>
+<script>
+  (async () => {
+    const load = async (name) => new Uint8Array(await (await fetch('http://localhost:8788/media/av/' + name)).arrayBuffer());
+    const [video, audio] = await Promise.all([load('video.mp4'), load('audio.mp4')]);
+    const ms = new MediaSource(), v = document.getElementById('target');
+    v.src = URL.createObjectURL(ms);
+    await new Promise((r) => ms.addEventListener('sourceopen', r, { once: true }));
+    // Every buffer must exist before the first append.
+    const vb = ms.addSourceBuffer('video/mp4; codecs="avc1.64000d"'), ab = ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
+    const feed = (sb, data) => new Promise((r) => { sb.addEventListener('updateend', r, { once: true }); sb.appendBuffer(data) });
+    await Promise.all([feed(vb, video), feed(ab, audio)]);
+    performance.clearResourceTimings();
+    window.__ready = true;
+  })().catch((e) => (window.__error = String(e)));
+</script>

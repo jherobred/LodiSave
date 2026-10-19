@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>HLS with a separate audio playlist</title>
+<p>Like X and Reddit: the video variant has no sound, and the audio streams from its own playlist. Saving must join them.</p>
+<script>
+  const base = 'http://localhost:8788/media/hls2/';
+  (async () => {
+    const master = await (await fetch(base + 'master.m3u8')).text();
+    const audio = /URI="([^"]+)"/.exec(master)[1];
+    const variant = master.trim().split('\n').pop();
+    await Promise.all([fetch(base + variant), fetch(base + audio)]);
+    performance.clearResourceTimings(); // playlists must come from the PerformanceObserver, not the buffer
+    window.__ready = true;
+  })().catch((e) => (window.__error = String(e)));
+</script>
