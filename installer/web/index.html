@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self'; font-src 'self'; script-src 'self'">
+  <title>LodiSave Setup</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <svg width="0" height="0" class="defs" aria-hidden="true" focusable="false"><defs>
+    <radialGradient id="g-fur" cx=".38" cy=".3" r=".78"><stop offset="0" stop-color="#F8DDB8"/><stop offset=".55" stop-color="#E8B37A"/><stop offset="1" stop-color="#C98E52"/></radialGradient>
+    <radialGradient id="g-cheek" cx=".4" cy=".35" r=".7"><stop offset="0" stop-color="#FFEFD8"/><stop offset="1" stop-color="#F3CFA3"/></radialGradient>
+    <linearGradient id="g-cream" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFAF2"/><stop offset="1" stop-color="#FBEBD6"/></linearGradient>
+    <radialGradient id="g-paw" cx=".4" cy=".35" r=".75"><stop offset="0" stop-color="#FFEDE3"/><stop offset="1" stop-color="#F5C7AE"/></radialGradient>
+  </defs></svg>
+
+  <div class="app">
+    <aside class="hero">
+      <svg class="rings" viewBox="0 0 600 600" aria-hidden="true"><circle cx="300" cy="300" r="296" fill="#151517"/><circle cx="300" cy="300" r="262" fill="#111113"/><path d="M300 38V562M38 300H562M115 115L485 485M485 115L115 485" stroke="#151517" stroke-width="10" stroke-linecap="round"/><circle cx="300" cy="300" r="40" fill="#151517"/></svg>
+      <div class="leaves" aria-hidden="true"></div>
+      <svg class="lodi big" id="hero-lodi" data-pose="idle" viewBox="0 0 160 160" aria-hidden="true">
+        <ellipse class="shadow" cx="80" cy="148" rx="44" ry="6"/>
+        <g class="hop"><g class="bod">
+          <g class="ear l"><circle class="fur" cx="46" cy="44" r="14"/><circle class="pink" cx="47" cy="46" r="7"/></g>
+          <g class="ear r"><circle class="fur" cx="114" cy="44" r="14"/><circle class="pink" cx="113" cy="46" r="7"/></g>
+          <ellipse class="paw" cx="56" cy="139" rx="12" ry="6"/><ellipse class="paw" cx="104" cy="139" rx="12" ry="6"/>
+          <path class="fur" d="M80 36C112 36 136 60 138 94C140 122 116 140 80 140C44 140 20 122 22 94C24 60 48 36 80 36Z"/>
+          <ellipse class="gloss" cx="58" cy="56" rx="17" ry="8" transform="rotate(-28 58 56)"/><path class="tuft" d="M74 38Q79 27 87 34"/>
+          <path class="cream" d="M50 112C50 94 63 86 80 86C97 86 110 94 110 112C110 128 97 138 80 138C63 138 50 128 50 112Z"/>
+          <g class="cheek l"><ellipse class="fur2" cx="44" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="44" cy="95" rx="7" ry="4.5"/></g>
+          <g class="cheek r"><ellipse class="fur2" cx="116" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="116" cy="95" rx="7" ry="4.5"/></g>
+          <g class="blink"><circle class="ink" cx="62" cy="80" r="8.5"/><circle class="ink" cx="98" cy="80" r="8.5"/><circle class="hi" cx="65" cy="76.5" r="3.2"/><circle class="hi" cx="101" cy="76.5" r="3.2"/><circle class="hi" cx="59.5" cy="83.5" r="1.3"/><circle class="hi" cx="95.5" cy="83.5" r="1.3"/></g>
+          <path class="nose" d="M75.5 92.5Q80 90 84.5 92.5Q82.5 96.5 80 97Q77.5 96.5 75.5 92.5Z"/>
+          <path class="line" d="M72.5 100Q76.25 104 80 100.5Q83.75 104 87.5 100"/>
+          <ellipse class="paw" cx="67" cy="122" rx="9.5" ry="7.5"/><ellipse class="paw" cx="93" cy="122" rx="9.5" ry="7.5"/>
+        </g></g>
+      </svg>
+      <div class="lockup">
+        <svg viewBox="0 0 108 108" width="46" height="46" aria-hidden="true">
+          <rect width="108" height="108" rx="26" fill="#18181A"/><rect x="1" y="1" width="106" height="106" rx="25" fill="none" stroke="#2E2E32" stroke-width="2"/>
+          <circle cx="36" cy="36" r="9" fill="url(#g-fur)"/><circle cx="72" cy="36" r="9" fill="url(#g-fur)"/>
+          <path d="M54 30C72 30 84 42 84 60C84 76 71 86 54 86C37 86 24 76 24 60C24 42 36 30 54 30Z" fill="url(#g-fur)"/>
+          <ellipse cx="54" cy="73" rx="15" ry="10" fill="#FBEBD6"/>
+          <ellipse cx="29" cy="66" rx="11" ry="10" fill="#F3CFA3"/><ellipse cx="79" cy="66" rx="11" ry="10" fill="#F3CFA3"/>
+          <circle cx="44" cy="56" r="5" fill="#141414"/><circle cx="64" cy="56" r="5" fill="#141414"/>
+          <path d="M51 64.6Q54 63 57 64.6Q55.8 67.6 54 68Q52.2 67.6 51 64.6Z" fill="#EE7A6E"/>
+        </svg>
+        <div>
+          <strong>LodiSave</strong>
+          <span>Save what sites won't let you</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="panel">
+      <div class="chrome">
+        <button class="icon-btn" data-action="minimize" aria-label="Minimize">
+          <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+        </button>
+        <button class="icon-btn close" data-action="close" aria-label="Close">
+          <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Install: first screen -->
+      <section class="screen" id="welcome">
+        <span class="pill"><i class="dot"></i><span id="welcome-pill"></span></span>
+        <h1 id="welcome-title">Save any photo or video, <em>even the blocked ones.</em></h1>
+        <p class="lead">LodiSave lives in your tray. Copy a link and save it, or capture part of the screen. Its browser extension saves what right-click can't.</p>
+        <ul class="features">
+          <li>
+            <span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></span>
+            Instagram, TikTok, X, Facebook, Reddit, Pinterest and YouTube
+          </li>
+          <li>
+            <span class="ico"><svg viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span>
+            Runs on this PC. No account and no tracking.
+          </li>
+          <li>
+            <span class="ico"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></span>
+            Full quality, saved straight to Downloads
+          </li>
+        </ul>
+        <div class="actions">
+          <button class="btn btn-primary" id="install" data-primary>
+            <span id="install-label">Install</span>
+            <svg viewBox="0 0 24 24"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+          </button>
+          <button class="btn btn-secondary btn-square" data-action="openOptions" aria-label="Install options" title="Install options">
+            <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+          </button>
+        </div>
+        <div class="fine">
+          <span id="fine-print"></span>
+          <button class="link" data-action="openLicense">License</button>
+        </div>
+      </section>
+
+      <!-- Install and uninstall progress -->
+      <section class="screen center" id="progress">
+        <div class="stage">
+          <div class="burst" id="burst"></div>
+          <svg class="lodi" id="work-lodi" data-pose="full" viewBox="0 0 160 160" aria-hidden="true">
+            <ellipse class="shadow" cx="80" cy="148" rx="46" ry="6"/>
+            <g class="hop"><g class="bod">
+              <g class="ear l"><circle class="fur" cx="46" cy="44" r="14"/><circle class="pink" cx="47" cy="46" r="7"/></g>
+              <g class="ear r"><circle class="fur" cx="114" cy="44" r="14"/><circle class="pink" cx="113" cy="46" r="7"/></g>
+              <ellipse class="paw" cx="56" cy="139" rx="12" ry="6"/><ellipse class="paw" cx="104" cy="139" rx="12" ry="6"/>
+              <g data-p="yay"><ellipse class="paw up" cx="20" cy="66" rx="9.5" ry="8"/><ellipse class="paw up" cx="140" cy="66" rx="9.5" ry="8"/></g>
+              <path class="fur" d="M80 36C112 36 136 60 138 94C140 122 116 140 80 140C44 140 20 122 22 94C24 60 48 36 80 36Z"/>
+              <ellipse class="gloss" cx="58" cy="56" rx="17" ry="8" transform="rotate(-28 58 56)"/><path class="tuft" d="M74 38Q79 27 87 34"/>
+              <path class="cream" d="M50 112C50 94 63 86 80 86C97 86 110 94 110 112C110 128 97 138 80 138C63 138 50 128 50 112Z"/>
+              <g class="cheek l" id="cheek-l"><ellipse class="fur2" cx="44" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="44" cy="95" rx="7" ry="4.5"/></g>
+              <g class="cheek r" id="cheek-r"><ellipse class="fur2" cx="116" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="116" cy="95" rx="7" ry="4.5"/></g>
+              <g><path class="line" d="M54 82Q62 72.5 70 82"/><path class="line" d="M90 82Q98 72.5 106 82"/></g>
+              <path class="nose" d="M75.5 92.5Q80 90 84.5 92.5Q82.5 96.5 80 97Q77.5 96.5 75.5 92.5Z"/>
+              <path data-p="full" class="line" d="M74.5 100Q77.25 103 80 100.5Q82.75 103 85.5 100"/>
+              <g data-p="yay"><path class="ink" d="M71 100.5Q80 99 89 100.5Q87 112 80 112Q73 112 71 100.5Z"/><ellipse class="pink" cx="80" cy="108" rx="4.2" ry="2.4"/></g>
+              <ellipse class="paw" cx="67" cy="122" rx="9.5" ry="7.5"/><ellipse class="paw" cx="93" cy="122" rx="9.5" ry="7.5"/>
+            </g></g>
+          </svg>
+        </div>
+        <h2 class="status" id="progress-title">Installing LodiSave</h2>
+        <div class="file" id="progress-file"></div>
+        <div class="bar"><i id="progress-bar"></i></div>
+        <div class="pct" id="progress-pct">0%</div>
+      </section>
+
+      <!-- Install finished -->
+      <section class="screen" id="done">
+        <span class="badge"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+        <h1 id="done-title">LodiSave is ready</h1>
+        <p class="lead" id="done-lead"></p>
+        <p class="note" id="done-note" hidden></p>
+        <div class="tip">
+          <div class="tip-title">Try it now</div>
+          <div class="tip-row"><kbd>Ctrl</kbd><kbd>C</kbd><span>a link, then click Lodi in the tray.</span></div>
+          <div class="tip-row"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>L</kbd><span>captures any part of the screen.</span></div>
+          <div class="tip-row"><span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span>In the browser, hover photos or videos and tick them to save several at once.</span></div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" data-action="launch" data-primary>
+            Open LodiSave
+            <svg viewBox="0 0 24 24"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
+          </button>
+          <button class="btn btn-secondary" data-action="close">Close</button>
+        </div>
+      </section>
+
+      <!-- Something failed -->
+      <section class="screen" id="error">
+        <span class="badge danger"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg></span>
+        <h1 id="error-title">Setup couldn't finish</h1>
+        <p class="lead">Here is what went wrong:</p>
+        <pre class="errbox" id="error-text"></pre>
+        <div class="actions">
+          <button class="btn btn-primary" data-action="retry" data-primary>Try again</button>
+          <button class="btn btn-secondary" data-action="close">Close</button>
+        </div>
+      </section>
+
+      <!-- Uninstall: confirm -->
+      <section class="screen" id="remove">
+        <span class="pill muted"><i class="dot"></i><span id="remove-pill"></span></span>
+        <h1>Remove LodiSave?</h1>
+        <p class="lead">This removes the app, its shortcuts and the extension folder. Everything you saved stays in Downloads\LodiSave.</p>
+        <div class="card toggle-row">
+          <div>
+            <div class="t-title">Also remove my settings and the video helper</div>
+            <div class="t-sub">Leave this off to keep them for next time.</div>
+          </div>
+          <button class="switch" role="switch" aria-checked="false" data-toggle="removeData" aria-label="Also remove my settings and the video helper"><i></i></button>
+        </div>
+        <div class="actions">
+          <button class="btn btn-danger" id="uninstall" data-primary>Uninstall</button>
+          <button class="btn btn-secondary" data-action="close">Cancel</button>
+        </div>
+      </section>
+
+      <!-- Uninstall finished -->
+      <section class="screen" id="removed">
+        <span class="badge"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+        <h1>LodiSave was removed</h1>
+        <p class="lead" id="removed-lead"></p>
+        <p class="note" id="removed-note" hidden></p>
+        <div class="actions">
+          <button class="btn btn-primary" data-action="close" data-primary>Close</button>
+        </div>
+      </section>
+
+      <div class="backdrop" id="backdrop" data-action="closeSheet"></div>
+
+      <div class="sheet" id="options" role="dialog" aria-label="Install options">
+        <div class="sheet-head">
+          <h2>Install options</h2>
+          <button class="icon-btn" data-action="closeSheet" aria-label="Close options">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="card">
+          <div class="t-title">Location</div>
+          <div class="path-row">
+            <span class="path" id="dir-text"></span>
+            <button class="btn btn-secondary btn-sm" id="change-dir">Change</button>
+          </div>
+        </div>
+        <div class="card toggle-row">
+          <div>
+            <div class="t-title">Desktop shortcut</div>
+            <div class="t-sub">Open LodiSave from your desktop.</div>
+          </div>
+          <button class="switch" role="switch" aria-checked="true" data-toggle="desktopShortcut" aria-label="Desktop shortcut"><i></i></button>
+        </div>
+        <div class="card toggle-row">
+          <div>
+            <div class="t-title">Start with Windows</div>
+            <div class="t-sub">Keeps Lodi ready in the tray after you sign in.</div>
+          </div>
+          <button class="switch" role="switch" aria-checked="true" data-toggle="startWithWindows" aria-label="Start with Windows"><i></i></button>
+        </div>
+        <button class="btn btn-primary" data-action="closeSheet">Done</button>
+      </div>
+
+      <div class="sheet tall" id="license" role="dialog" aria-label="License">
+        <div class="sheet-head">
+          <h2>License</h2>
+          <button class="icon-btn" data-action="closeSheet" aria-label="Close license">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="license-text">
+          <p><strong>MIT License</strong></p>
+          <p>Copyright (c) 2026 LodiSave contributors</p>
+          <p>Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:</p>
+          <p>The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.</p>
+          <p>THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.</p>
+          <p><strong>Other components</strong></p>
+          <p>The first time you save a link, LodiSave downloads yt-dlp (Unlicense) from its official GitHub releases. The Geist fonts are under the SIL Open Font License 1.1. Details are on <a class="link" href="https://github.com/jherobred/LodiSave">GitHub</a>.</p>
+          <p>Save only what you have the right to keep. Respect the creators and the sites' terms.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
