@@ -8,3 +8,9 @@ design/
 *.keystore
 *.jks
 *.log
+
+__pycache__/
+.gradle/
+android/**/build/
+android/local.properties
+.kotlin/
