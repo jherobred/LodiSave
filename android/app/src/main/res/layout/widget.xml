@@ -6,27 +6,16 @@
     android:background="@drawable/widget_bg"
     android:padding="10dp">
 
-    <LinearLayout
+    <TextView
+        android:id="@+id/widget_label"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:gravity="center_horizontal"
-        android:orientation="vertical">
-
-        <ImageView
-            android:layout_width="68dp"
-            android:layout_height="68dp"
-            android:importantForAccessibility="no"
-            android:src="@drawable/lodi" />
-
-        <TextView
-            android:id="@+id/widget_label"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:fontFamily="@font/geist_semibold"
-            android:text="@string/widget_label"
-            android:textColor="@color/widget_ink"
-            android:textSize="14sp" />
-    </LinearLayout>
+        android:drawablePadding="4dp"
+        android:fontFamily="@font/geist_semibold"
+        android:gravity="center"
+        android:text="@string/widget_label"
+        android:textColor="@color/widget_ink"
+        android:textSize="14sp"
+        android:drawableTop="@drawable/lodi" />
 </FrameLayout>

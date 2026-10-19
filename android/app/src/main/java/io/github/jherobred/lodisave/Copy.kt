@@ -1,6 +1,7 @@
 package io.github.jherobred.lodisave
 
 import android.content.Context
+import androidx.core.content.edit
 
 /** The app's words in English and Taglish. The language is an in-app setting, not the phone's. */
 class Copy(val tl: Boolean) {
@@ -75,11 +76,11 @@ class Prefs(ctx: Context) {
     private val sp = ctx.getSharedPreferences("lodisave", Context.MODE_PRIVATE)
     var lang: String
         get() = sp.getString("lang", "en") ?: "en"
-        set(v) = sp.edit().putString("lang", v).apply()
+        set(v) = sp.edit { putString("lang", v) }
     var motion: Boolean
         get() = sp.getBoolean("motion", true)
-        set(v) = sp.edit().putBoolean("motion", v).apply()
+        set(v) = sp.edit { putBoolean("motion", v) }
     var askedNotifications: Boolean
         get() = sp.getBoolean("askedNotifications", false)
-        set(v) = sp.edit().putBoolean("askedNotifications", v).apply()
+        set(v) = sp.edit { putBoolean("askedNotifications", v) }
 }
