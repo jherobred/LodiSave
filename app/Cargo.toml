@@ -1,6 +1,6 @@
 [package]
 name = "lodisave"
-version = "0.2.0"
+version = "0.2.1"
 description = "Save the images and videos that sites block you from saving."
 authors = ["LodiSave contributors"]
 license = "MIT"
