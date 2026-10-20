@@ -14,6 +14,9 @@ const COPY = {
     login: 'This one needs a login', loginSub: 'Open it in your browser and save it with the LodiSave extension.',
     nothing: 'Nothing to save here', nothingSub: 'LodiSave found no video or image at this link.',
     offline: 'Can\'t reach the site', offlineSub: 'Check your connection and try again.',
+    refused: 'The site said no', refusedSub: 'It blocks some networks and regions. Try again later or on another network.',
+    gone: 'This post is gone', goneSub: 'It was removed, made private, or the link is wrong.',
+    broken: 'LodiSave can\'t read this site right now', brokenSub: 'The site changed. LodiSave updates its reader every week, so try again later.',
     helperFail: 'Couldn\'t get the video helper', helperFailSub: 'LodiSave downloads yt-dlp the first time. Check your connection.',
     noimage: 'The image is gone', noimageSub: 'Copy it again, then save.',
     blocked: 'Windows blocked the save', blockedSub: 'Controlled folder access protects Downloads. Allow LodiSave under Ransomware protection in Windows Security.', security: 'Open Windows Security',
@@ -34,6 +37,9 @@ const COPY = {
     login: 'Kailangan mag-login dito', loginSub: 'Buksan sa browser at i-save gamit ang LodiSave extension.',
     nothing: 'Walang ma-save dito', nothingSub: 'Walang nakitang video o image ang LodiSave sa link na ito.',
     offline: 'Hindi ma-reach ang site', offlineSub: 'I-check ang internet mo at subukan ulit.',
+    refused: 'Ayaw ibigay ng site', refusedSub: 'May mga network at lugar na hinaharang nito. Subukan ulit mamaya o sa ibang network.',
+    gone: 'Wala na ang post na ito', goneSub: 'Tinanggal, ginawang private, o mali ang link.',
+    broken: 'Hindi pa mabasa ng LodiSave ang site na ito', brokenSub: 'Nagbago ang site. Linggo-linggo nag-a-update ang LodiSave, kaya subukan ulit mamaya.',
     helperFail: 'Hindi makuha ang video helper', helperFailSub: 'Dina-download ng LodiSave ang yt-dlp sa unang gamit. I-check ang internet mo.',
     noimage: 'Wala na ang image', noimageSub: 'I-copy ulit, tapos i-save.',
     blocked: 'Hinarang ng Windows ang pag-save', blockedSub: 'Pinoprotektahan ng Controlled folder access ang Downloads. I-allow ang LodiSave sa Ransomware protection ng Windows Security.', security: 'Buksan ang Windows Security',
@@ -45,7 +51,7 @@ const COPY = {
     ago: (s) => (s < 60 ? 'ngayon' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`),
   },
 };
-const ERRORS = { login: 'login', nothing: 'nothing', offline: 'offline', helper: 'helperFail', noimage: 'noimage', blocked: 'blocked' };
+const ERRORS = { login: 'login', nothing: 'nothing', offline: 'offline', refused: 'refused', gone: 'gone', broken: 'broken', helper: 'helperFail', noimage: 'noimage', blocked: 'blocked' };
 
 const $ = (id) => document.getElementById(id);
 const pref = (k, d) => { try { return localStorage.getItem(k) || d } catch { return d } };
@@ -114,7 +120,7 @@ function paint() {
     sub = key ? say(`${key}Sub`) : ui.error;
     go.textContent = ui.error === 'blocked' ? say('security') : say('again');
     later.textContent = say('later');
-    go.hidden = ui.error === 'login' || ui.error === 'noimage';
+    go.hidden = ['login', 'noimage', 'gone'].includes(ui.error);
   }
   $('card-title').textContent = title;
   $('card-sub').textContent = sub;

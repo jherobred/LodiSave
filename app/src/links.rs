@@ -73,17 +73,75 @@ fn error_code(stderr: &str) -> String {
     let line = stderr.lines().rev().find(|l| l.contains("ERROR:")).unwrap_or(stderr.trim());
     let msg = line.split("ERROR:").last().unwrap_or(line).trim();
     let low = msg.to_lowercase();
-    if ["login", "log in", "sign in", "cookies", "private", "authentication"].iter().any(|k| low.contains(k)) {
+    let any = |keys: &[&str]| keys.iter().any(|k| low.contains(k));
+    // The same order as code_for in android/app/src/main/python/lodi.py. HTTP statuses come before
+    // "offline" because yt-dlp words them "Unable to download webpage: HTTP Error 403".
+    if any(&["login", "log in", "sign in", "cookies", "private", "authentication", "http error 401"]) {
         "login".into()
-    } else if ["unsupported url", "no video", "no media", "there's no video", "is not a valid url"].iter().any(|k| low.contains(k)) {
+    } else if any(&["unsupported url", "no video", "no media", "there's no video", "is not a valid url"]) {
         "nothing".into()
-    } else if ["getaddrinfo", "timed out", "unable to download webpage", "connection"].iter().any(|k| low.contains(k)) {
+    } else if any(&["http error 403", "http error 429", "ip address is blocked", "not available in your country", "geo restrict", "too many requests"]) {
+        "refused".into()
+    } else if any(&["http error 5"]) {
+        "offline".into()
+    } else if any(&["http error 404", "http error 410", "not found", "unavailable", "removed", "does not exist", "deleted"]) {
+        "gone".into()
+    } else if any(&["getaddrinfo", "timed out", "unable to download webpage", "connection", "name resolution", "network is unreachable"]) {
         "offline".into()
     } else if msg.is_empty() {
         "nothing".into()
+    } else if any(&["report this issue", "unable to extract", "cannot parse"]) || !msg.starts_with('[') {
+        // Extractor errors start with "[site] id:". Anything else is an extractor that crashed.
+        "broken".into()
     } else {
         msg.chars().take(300).collect()
     }
+}
+
+/// The real link inside a redirect wrapper, like the l.facebook.com links Messenger and Facebook
+/// hand out, as unwrap in lodi.py.
+fn unwrap(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else { return url.into() };
+    let (host, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = host.to_lowercase();
+    let (path, query) = tail.split_once('?').unwrap_or((tail, ""));
+    let wrapper = ["l.facebook.com", "lm.facebook.com", "l.instagram.com", "l.messenger.com"].contains(&host.as_str())
+        || ((host.starts_with("google.") || host.starts_with("www.google.")) && path == "url");
+    if !scheme.starts_with("http") || !wrapper {
+        return url.into();
+    }
+    for key in ["u", "q", "url"] {
+        if let Some(v) = query.split('&').find_map(|p| p.strip_prefix(key).and_then(|v| v.strip_prefix('='))) {
+            let inner = decode(v);
+            if inner.starts_with("https://") || inner.starts_with("http://") {
+                return unwrap(&inner);
+            }
+        }
+    }
+    url.into()
+}
+
+fn decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let (mut out, mut i) = (Vec::with_capacity(b.len()), 0);
+    while i < b.len() {
+        let hex = (b[i] == b'%' && i + 2 < b.len())
+            .then(|| std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()))
+            .flatten();
+        match (hex, b[i]) {
+            (Some(v), _) => { out.push(v); i += 3 }
+            (None, b'+') => { out.push(b' '); i += 1 }
+            (None, c) => { out.push(c); i += 1 }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Share images that are the site's own art, which pages show when the post itself is hidden.
+// ponytail: name-based, a site whose logo file is called something else still gets its logo saved
+fn site_art(name: &str) -> bool {
+    let low = name.to_lowercase();
+    ["logo", "favicon", "apple-touch-icon", "placeholder", "default-", "default_", "default.", "og-default", "og_default"].iter().any(|k| low.contains(k))
 }
 
 fn best<'a>(it: impl Iterator<Item = &'a Value>, key: impl Fn(&Value) -> (u64, f64)) -> Option<&'a Value> {
@@ -164,9 +222,25 @@ fn unique(dir: &Path, stem: &str, ext: &str) -> PathBuf {
 
 fn video(app: &AppHandle, exe: &Path, url: &str, dir: &Path) -> Result<Vec<PathBuf>, String> {
     progress(app, "reading", None);
-    let out = base(exe).arg("-J").arg("--").arg(url).output().map_err(|_| "helper".to_string())?;
+    let read = |generic: bool| {
+        let mut c = base(exe);
+        if generic {
+            c.arg("--force-generic-extractor");
+        }
+        c.arg("-J").arg("--").arg(url).output().map_err(|_| "helper".to_string())
+    };
+    let mut out = read(false)?;
     if !out.status.success() {
-        return Err(error_code(&String::from_utf8_lossy(&out.stderr)));
+        let code = error_code(&String::from_utf8_lossy(&out.stderr));
+        if code != "broken" {
+            return Err(code);
+        }
+        // The site changed under its extractor. The page may still name its video in og:video,
+        // JSON-LD or a <video> tag, which the generic extractor reads.
+        out = read(true)?;
+        if !out.status.success() {
+            return Err(code);
+        }
     }
     let info: Value = serde_json::from_slice(&out.stdout).map_err(|_| "nothing".to_string())?;
     let tmp = std::env::temp_dir().join("LodiSave");
@@ -265,11 +339,18 @@ fn image(app: &AppHandle, url: &str, dir: &Path) -> Result<Vec<PathBuf>, String>
         return Err("offline".into());
     }
     let shown = og_image(&String::from_utf8_lossy(&page.stdout)).ok_or("nothing")?;
-    let shown = if shown.starts_with("//") { format!("https:{shown}") } else { shown };
-    if !shown.starts_with("http") {
+    let origin = url.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
+    let shown = if shown.starts_with("//") {
+        format!("https:{shown}")
+    } else if shown.starts_with('/') {
+        format!("{origin}{shown}")
+    } else {
+        shown
+    };
+    let name = shown.split(['?', '#']).next().unwrap_or("").rsplit('/').next().unwrap_or("");
+    if !shown.starts_with("http") || site_art(name) {
         return Err("nothing".into());
     }
-    let name = shown.split(['?', '#']).next().unwrap_or("").rsplit('/').next().unwrap_or("");
     let (stem, ext) = name.rsplit_once('.').filter(|(_, e)| e.len() <= 4).unwrap_or((name, "jpg"));
     let format = shown.split_once("format=").map(|(_, f)| f.split('&').next().unwrap_or("").to_string()).filter(|f| !f.is_empty());
     let out = unique(dir, &clean_name(stem), &format.unwrap_or_else(|| ext.to_string()));
@@ -280,11 +361,13 @@ fn image(app: &AppHandle, url: &str, dir: &Path) -> Result<Vec<PathBuf>, String>
         }
     }
     let _ = std::fs::remove_file(&out);
-    Err("nothing".into())
+    // The image is there and the page loaded, so the site refused to send it.
+    Err("refused".into())
 }
 
 pub fn save(app: &AppHandle, url: &str, dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let url = url.trim();
+    let url = unwrap(url.trim());
+    let url = url.as_str();
     if !(url.starts_with("https://") || url.starts_with("http://")) || url.contains(char::is_whitespace) {
         return Err("nothing".into());
     }
@@ -319,5 +402,29 @@ mod tests {
         assert_eq!(super::upgrade("https://pbs.twimg.com/media/Gx1?format=png&name=small").as_deref(), Some("https://pbs.twimg.com/media/Gx1?format=png&name=orig"));
         assert_eq!(super::upgrade("https://pbs.twimg.com/media/Gx1.jpg:large").as_deref(), Some("https://pbs.twimg.com/media/Gx1?format=jpg&name=orig"));
         assert_eq!(super::clean_name(r#"a/b: "c"?. "#), "a_b_ _c__");
+    }
+
+    #[test]
+    fn codes_links_and_site_art() {
+        use super::error_code as code;
+        assert_eq!(code("ERROR: [Rumble] v1: Unable to download webpage: HTTP Error 403: Forbidden"), "refused");
+        assert_eq!(code("ERROR: [TikTok] 67: Your IP address is blocked from accessing this post"), "refused");
+        assert_eq!(code("ERROR: [vimeo] 56: Unable to download webpage: HTTP Error 404: Not Found"), "gone");
+        assert_eq!(code("ERROR: [twitter] 65: Video #1 is unavailable"), "gone");
+        assert_eq!(code("ERROR: [x] 1: Unable to download webpage: HTTP Error 503: Service Unavailable"), "offline");
+        assert_eq!(code("ERROR: [youtube] a: Video unavailable. This video is not available in your country"), "refused");
+        assert_eq!(code("ERROR: [vimeo] 11: Unable to download webpage: HTTP Error 401: Unauthorized"), "login");
+        assert_eq!(code("ERROR: [facebook] 36: Cannot parse data; please report this issue on https://github.com/yt-dlp/yt-dlp/issues"), "broken");
+        assert_eq!(code("ERROR: the JSON object must be str, bytes or bytearray, not NoneType"), "broken");
+        assert_eq!(code("ERROR: [x] 1: Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed>"), "offline");
+        assert_eq!(code("ERROR: Unsupported URL: https://x.test/"), "nothing");
+
+        assert_eq!(super::unwrap("https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.tiktok.com%2F%40a%2Fvideo%2F1%3Fx%3D1&h=AT0"), "https://www.tiktok.com/@a/video/1?x=1");
+        assert_eq!(super::unwrap("https://www.google.com/url?q=https://x.com/a/status/1&sa=D"), "https://x.com/a/status/1");
+        assert_eq!(super::unwrap("https://www.facebook.com/reel/1?u=https://evil.test/"), "https://www.facebook.com/reel/1?u=https://evil.test/");
+        assert_eq!(super::unwrap("https://l.facebook.com/l.php?u=javascript%3Aalert(1)"), "https://l.facebook.com/l.php?u=javascript%3Aalert(1)");
+
+        assert!(super::site_art("t_logo_2x.png") && super::site_art("og-default.jpg"));
+        assert!(!super::site_art("5645318632_09ff5eef3b_b.jpg"));
     }
 }
