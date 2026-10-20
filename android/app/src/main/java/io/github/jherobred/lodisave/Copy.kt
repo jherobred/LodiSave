@@ -37,10 +37,16 @@ class Copy(val tl: Boolean) {
             t("LodiSave found no video or image at this link.", "Walang nakitang video o image ang LodiSave sa link na ito.")
         "offline" -> t("Can't reach the site", "Hindi ma-reach ang site") to
             t("Check your connection and try again.", "I-check ang internet mo at subukan ulit.")
+        "refused" -> t("The site said no", "Ayaw ibigay ng site") to
+            t("It blocks some networks and regions. Try again later or on another network.", "May mga network at lugar na hinaharang nito. Subukan ulit mamaya o sa ibang network.")
+        "gone" -> t("This post is gone", "Wala na ang post na ito") to
+            t("It was removed, made private, or the link is wrong.", "Tinanggal, ginawang private, o mali ang link.")
+        "broken" -> t("LodiSave can't read this site right now", "Hindi pa mabasa ng LodiSave ang site na ito") to
+            t("The site changed. LodiSave updates its reader every week, so try again later.", "Nagbago ang site. Linggo-linggo nag-a-update ang LodiSave, kaya subukan ulit mamaya.")
         "helper" -> t("Couldn't get the video helper", "Hindi makuha ang video helper") to
             t("LodiSave downloads yt-dlp the first time. Check your connection.", "Dina-download ng LodiSave ang yt-dlp sa unang gamit. I-check ang internet mo.")
-        "youtube" -> t("YouTube isn't supported here yet", "Hindi pa kaya ang YouTube dito") to
-            t("YouTube needs a JavaScript engine this app doesn't have yet. The Windows app saves YouTube links.", "Kailangan ng YouTube ng JavaScript engine na wala pa sa app na ito. Kaya ito ng Windows app.")
+        "noaccess" -> t("That app didn't hand it over", "Hindi ibinigay ng app") to
+            t("It shared the file without letting LodiSave open it. Save it in that app, or share its link instead.", "Shinare nito ang file pero hindi pinabuksan sa LodiSave. I-save ito sa app na iyon, o i-share ang link.")
         "nolink" -> t("No link copied", "Walang na-copy na link") to
             t("Copy a link first, then tap the widget.", "Mag-copy muna ng link, tapos i-tap ang widget.")
         else -> failed to code

@@ -86,8 +86,10 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             if (!Python.isStarted()) Python.start(AndroidPlatform(applicationContext))
             val lodi = Python.getInstance().getModule("lodi")
             val sink = Sink { phase, percent -> report(phase, percent) }
+            // QuickJS ships as a lib*.so so Android unpacks it executable, for YouTube's challenges.
+            val qjs = File(applicationContext.applicationInfo.nativeLibraryDir, "libqjs.so").path
             fun run(format: String?): Pair<List<File>, String?> {
-                val r = JSONObject(lodi.callAttr("save", url, dir.path, zip.path, sink, format).toString())
+                val r = JSONObject(lodi.callAttr("save", url, dir.path, zip.path, sink, format, qjs).toString())
                 if (r.has("error")) throw Failure(r.getString("error"))
                 val a = r.getJSONArray("files")
                 return List(a.length()) { File(a.getString(it)) } to r.optString("join").ifEmpty { null }

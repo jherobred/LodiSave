@@ -107,7 +107,8 @@ class ShareActivity : ComponentActivity() {
                 val saved = withContext(Dispatchers.IO) { streams.map { Saver.publish(this@ShareActivity, it) } }
                 Job.Done(saved, saved.map { Saver.nameOf(this@ShareActivity, it) }, saved.map { contentResolver.getType(it).orEmpty() })
             } catch (e: Exception) {
-                Job.Failed((e as? Failure)?.code ?: (e.message ?: "nothing"))
+                // An app can share a file without letting LodiSave open it.
+                Job.Failed((e as? Failure)?.code ?: if (e is SecurityException) "noaccess" else (e.message ?: "nothing"))
             }
         }
     }

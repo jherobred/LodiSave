@@ -138,7 +138,7 @@ private fun Home(clip: String?, focus: Int) {
                                 Pill(copy.close, { jobId = null }, primary = false)
                             }
                             is Job.Failed -> {
-                                if (job.code != "youtube" && job.code != "login") Pill(copy.again, { save(jobLink) }, Modifier.weight(1f))
+                                if (job.code != "login" && job.code != "gone") Pill(copy.again, { save(jobLink) }, Modifier.weight(1f))
                                 Pill(copy.close, { jobId = null }, primary = false)
                             }
                             else -> {}

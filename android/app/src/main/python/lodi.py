@@ -2,10 +2,10 @@
 downloads and keeps current, as the Windows app does. Pages with no video fall back to their share
 image (og:image).
 
-Kotlin calls save(url, out_dir, ytdlp_zip, progress, fmt) and gets back JSON: {"files": [...]}, with
+Kotlin calls save(url, out_dir, ytdlp_zip, progress, fmt, qjs) and gets back JSON: {"files": [...]}, with
 "join" naming the output when the files are a video-only and an audio-only track for MediaMuxer to
-join, or {"error": code}. Codes the app translates: login, nothing, offline. Anything else is
-yt-dlp's own message. Run this file with Python 3 to check the pure parts.
+join, or {"error": code}. Codes the app translates: login, nothing, offline, refused, gone, broken.
+Anything else is yt-dlp's own message. Run this file with Python 3 to check the pure parts.
 """
 import html
 import json
@@ -17,6 +17,8 @@ import urllib.request
 
 UA = ('Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) '
       'Chrome/140.0.0.0 Mobile Safari/537.36')
+# Share images that are the site's own art, which pages show when the post itself is hidden.
+SITE_ART = re.compile(r'logo|favicon|apple-touch-icon|placeholder|default[-_.]|og[-_]default', re.I)
 IMAGE_TYPES = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif'}
 
 
@@ -25,14 +27,25 @@ class Failure(Exception):
 
 
 def code_for(message):
+    """The app's code for a yt-dlp error, as error_code in app/src/links.rs. HTTP statuses come
+    before 'offline' because yt-dlp words them "Unable to download webpage: HTTP Error 403"."""
     low = message.lower()
-    if any(k in low for k in ('login', 'log in', 'sign in', 'cookies', 'private', 'authentication')):
+    if any(k in low for k in ('login', 'log in', 'sign in', 'cookies', 'private', 'authentication', 'http error 401')):
         return 'login'
     if any(k in low for k in ('unsupported url', 'no video', 'no media', "there's no video", 'is not a valid url')):
         return 'nothing'
+    if any(k in low for k in ('http error 403', 'http error 429', 'ip address is blocked', 'not available in your country',
+                              'geo restrict', 'too many requests')):
+        return 'refused'
+    if 'http error 5' in low:
+        return 'offline'
+    if any(k in low for k in ('http error 404', 'http error 410', 'not found', 'unavailable', 'removed', 'does not exist', 'deleted')):
+        return 'gone'
     if any(k in low for k in ('getaddrinfo', 'timed out', 'unable to download webpage', 'connection',
                               'name resolution', 'network is unreachable')):
         return 'offline'
+    if any(k in low for k in ('report this issue', 'unable to extract', 'cannot parse')):
+        return 'broken'
     return message.split('ERROR:')[-1].strip()[:300] or 'nothing'
 
 
@@ -131,7 +144,8 @@ def image(url, out_dir, progress):
     except Exception:
         raise Failure('offline')
     shown = og_image(page.decode('utf-8', 'replace'))
-    if not shown:
+    # ponytail: name-based, a site whose logo file is called something else still gets its logo saved
+    if not shown or SITE_ART.search(urllib.parse.urlparse(shown).path.rsplit('/', 1)[-1]):
         raise Failure('nothing')
     shown = urllib.parse.urljoin(url, shown)
     progress.report('saving', -1.0)
@@ -148,18 +162,39 @@ def image(url, out_dir, progress):
             with open(path, 'wb') as f:
                 f.write(data)
             return [path]
-    raise Failure('offline' if refused else 'nothing')
+    raise Failure('refused' if refused else 'nothing')
 
 
-def video(yt_dlp, url, out_dir, progress, fmt=None):
+def video(yt_dlp, url, out_dir, progress, fmt=None, opts=None):
     progress.report('reading', -1.0)
     base = {'quiet': True, 'no_warnings': True, 'noplaylist': True, 'noprogress': True,
-            'updatetime': False, 'cachedir': False, 'paths': {'home': out_dir}}
+            'updatetime': False, 'cachedir': False, 'paths': {'home': out_dir}, **(opts or {})}
+
+    def read(**extra):
+        with yt_dlp.YoutubeDL(dict(base, **extra)) as ydl:
+            return ydl.extract_info(url, download=False)
+
     try:
-        with yt_dlp.YoutubeDL(base) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = read()
+        if not info:  # the site's extractor found nothing
+            raise Failure('nothing')
     except yt_dlp.utils.DownloadError as e:
-        raise Failure(code_for(str(e)))
+        if code_for(str(e)) != 'broken':
+            raise Failure(code_for(str(e)))
+        info = None
+    except Failure:
+        raise
+    except Exception:  # an extractor that crashes outright
+        info = None
+    if info is None:
+        # The site changed under its extractor. The page may still name its video in og:video,
+        # JSON-LD or a <video> tag, which the generic extractor reads.
+        try:
+            info = read(force_generic_extractor=True)
+        except Exception:
+            pass
+        if not info:
+            raise Failure('broken')
     if info.get('_type') == 'playlist':
         # ponytail: the first item of a carousel only, save each entry when someone needs carousels
         info = next((e for e in info.get('entries') or [] if e), None)
@@ -196,7 +231,7 @@ def video(yt_dlp, url, out_dir, progress, fmt=None):
     return {'files': [fetch(fmt or (choice[0] if choice else None), name, 0, 100)]}
 
 
-def save(url, out_dir, ytdlp_zip, progress, fmt=None):
+def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None):
     url = unwrap(url.strip())
     try:
         if not re.match(r'https?://\S+$', url):
@@ -204,14 +239,17 @@ def save(url, out_dir, ytdlp_zip, progress, fmt=None):
         if ytdlp_zip not in sys.path:
             sys.path.insert(0, ytdlp_zip)
         import yt_dlp
+        opts = {}
+        if qjs and os.path.isfile(qjs):
+            # YouTube's challenges run in QuickJS, with the solver script the zipapp carries. The
+            # cache keeps YouTube's player script between saves.
+            opts = {'js_runtimes': {'quickjs': {'path': qjs}},
+                    'cachedir': os.path.join(os.path.dirname(ytdlp_zip), 'yt-dlp-cache')}
         try:
-            return json.dumps(video(yt_dlp, url, out_dir, progress, fmt))
+            return json.dumps(video(yt_dlp, url, out_dir, progress, fmt, opts))
         except Failure as f:
-            # YouTube now answers only clients that solve its JavaScript challenge, and Android has
-            # no JavaScript runtime for yt-dlp. The Windows app has one.
-            if re.match(r'https?://([\w-]+\.)*(youtube\.com|youtu\.be)/', url):
-                raise Failure('youtube')
-            if str(f) != 'nothing':
+            # A YouTube page's share image is the thumbnail, not what anyone asked for.
+            if str(f) != 'nothing' or re.match(r'https?://([\w-]+\.)*(youtube\.com|youtu\.be)/', url):
                 raise
             return json.dumps({'files': image(url, out_dir, progress)})
     except Failure as f:
@@ -237,9 +275,19 @@ if __name__ == '__main__':
     assert upgrade('https://pbs.twimg.com/media/Gx1?format=png&name=small') == 'https://pbs.twimg.com/media/Gx1?format=png&name=orig'
     assert upgrade('https://pbs.twimg.com/media/Gx1.jpg:large') == 'https://pbs.twimg.com/media/Gx1?format=jpg&name=orig'
     assert upgrade('https://example.com/236x/a.jpg') is None
+    assert SITE_ART.search('t_logo_2x.png') and SITE_ART.search('og-default.jpg') and not SITE_ART.search('5645318632_09ff5eef3b_b.jpg')
     assert clean_name('a/b: "c"?. ') == 'a_b_ _c__'
     assert code_for('ERROR: [Instagram] x: Requested content is not available, rate-limit reached or login required') == 'login'
     assert code_for('ERROR: Unsupported URL: https://x.test/') == 'nothing'
+    assert code_for('ERROR: [Rumble] v1: Unable to download webpage: HTTP Error 403: Forbidden') == 'refused'
+    assert code_for('ERROR: [TikTok] 67: Your IP address is blocked from accessing this post') == 'refused'
+    assert code_for('ERROR: [vimeo] 56: Unable to download webpage: HTTP Error 404: Not Found') == 'gone'
+    assert code_for('ERROR: [twitter] 65: Video #1 is unavailable') == 'gone'
+    assert code_for('ERROR: [vimeo] 11: Unable to download webpage: HTTP Error 401: Unauthorized') == 'login'
+    assert code_for('ERROR: [facebook] 36: Cannot parse data; please report this issue on https://github.com/yt-dlp/yt-dlp/issues') == 'broken'
+    assert code_for('ERROR: [x] 1: Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed>') == 'offline'
+    assert code_for('ERROR: [x] 1: Unable to download webpage: HTTP Error 503: Service Unavailable') == 'offline'
+    assert code_for('ERROR: [youtube] a: Video unavailable. This video is not available in your country') == 'refused'
     assert json.loads(save('not a link', '.', '', None)) == {'error': 'nothing'}
     assert unwrap('https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.tiktok.com%2F%40a%2Fvideo%2F1%3Fx%3D1&h=AT0') == 'https://www.tiktok.com/@a/video/1?x=1'
     assert unwrap('https://www.google.com/url?q=https://x.com/a/status/1&sa=D') == 'https://x.com/a/status/1'
