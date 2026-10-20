@@ -2127,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "lodisave"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "arboard",
  "png 0.18.1",

@@ -21,10 +21,10 @@ LodiSave is a Windows tray app and a browser extension for Chrome and Edge. Righ
 
 ## Install
 
-1. Download `LodiSave-Setup-0.2.1.exe` from [Releases](https://github.com/jherobred/LodiSave/releases). The builds aren't code-signed yet, so SmartScreen may warn: choose More info, then Run anyway.
-2. For the browser extension, open LodiSave from the tray and choose Settings, then Browser extension, Set up. In `chrome://extensions` or `edge://extensions`, turn on Developer mode, choose Load unpacked and pick the folder that opened. The same files are in `LodiSave-extension-0.2.1.zip`.
+1. Download `LodiSave-Setup-0.2.2.exe` from [Releases](https://github.com/jherobred/LodiSave/releases). The builds aren't code-signed yet, so SmartScreen may warn: choose More info, then Run anyway.
+2. For the browser extension, open LodiSave from the tray and choose Settings, then Browser extension, Set up. In `chrome://extensions` or `edge://extensions`, turn on Developer mode, choose Load unpacked and pick the folder that opened. The same files are in `LodiSave-extension-0.2.2.zip`.
 
-`LodiSave-0.2.1-portable.exe` runs without installing.
+`LodiSave-0.2.2-portable.exe` runs without installing.
 
 Saves go to `Downloads\LodiSave`. If Windows Security's Controlled folder access protects Downloads, allow LodiSave under Ransomware protection.
 
@@ -40,7 +40,7 @@ The Android app in `android/` saves the same way, without a browser:
 - Saves go to `Pictures/LodiSave`, `Movies/LodiSave` and `Music/LodiSave`, so the gallery shows them.
 - Separate video and audio are joined with Android's own MediaMuxer, so there's no FFmpeg here either.
 
-Install `LodiSave-0.2.1-android.apk` from [Releases](https://github.com/jherobred/LodiSave/releases) (allow installs from your browser or file manager when Android asks). YouTube's challenges run in [QuickJS](https://github.com/quickjs-ng/quickjs), which ships inside the app.
+Install `LodiSave-0.2.2-android.apk` from [Releases](https://github.com/jherobred/LodiSave/releases) (allow installs from your browser or file manager when Android asks). YouTube's challenges run in [QuickJS](https://github.com/quickjs-ng/quickjs), which ships inside the app.
 
 ## Limits
 
