@@ -12,12 +12,14 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
 UA = ('Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) '
       'Chrome/140.0.0.0 Mobile Safari/537.36')
 # Share images that are the site's own art, which pages show when the post itself is hidden.
+DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
 SITE_ART = re.compile(r'logo|favicon|apple-touch-icon|placeholder|default[-_.]|og[-_]default', re.I)
 IMAGE_TYPES = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif'}
 
@@ -129,47 +131,191 @@ def unique(folder, stem, ext):
     return path
 
 
-def get(url, referer=None, limit=-1):
-    headers = {'User-Agent': UA}
+# What a phone browser sends for a page. Threads and Instagram send a post's data only to browsers.
+PAGE = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9', 'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none', 'Sec-Fetch-User': '?1', 'Upgrade-Insecure-Requests': '1'}
+FILE_TYPES = {**IMAGE_TYPES, 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3'}
+# Share links that redirect to the post, from the apps' Share buttons.
+SHORT = re.compile(r'https?://(?:(?:www|m|web)\.facebook\.com/share/|fb\.watch/|pin\.it/|v[mt]\.tiktok\.com/|t\.co/|'
+                   r'(?:www\.)?instagram\.com/share/|(?:www\.)?threads\.net/)')
+META_POST = re.compile(r'https?://(?:www\.)?(?:threads\.(?:com|net)/@[\w.]+/post|instagram\.com/(?:[\w.]+/)?(?:p|reels?|tv))/([\w-]+)')
+X_POST = re.compile(r'https?://(?:(?:www|mobile)\.)?(?:x|twitter)\.com/\w+/status(?:es)?/(\d+)')
+
+
+def http_code(e):
+    """The app's code for an HTTP error, as code_for does for yt-dlp's words."""
+    return {401: 'login', 403: 'refused', 429: 'refused', 404: 'gone', 410: 'gone'}.get(getattr(e, 'code', 0), 'offline')
+
+
+def open_url(url, referer=None, page=False, desktop=False):
+    headers = {'User-Agent': DESKTOP_UA if desktop else UA, **(PAGE if page else {})}
     if referer:
         headers['Referer'] = referer
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as r:
+    return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30)
+
+
+def get(url, referer=None, limit=-1, page=False):
+    with open_url(url, referer, page) as r:
         return r.read(limit), r.headers.get_content_type()
 
 
-def image(url, out_dir, progress):
-    progress.report('reading', -1.0)
+def page_of(url):
+    """A page's HTML and final address, as a phone browser gets them."""
     try:
-        page, _ = get(url, limit=8_000_000)
+        with open_url(url, page=True) as r:
+            return r.read(8_000_000).decode('utf-8', 'replace'), r.url
+    except urllib.error.HTTPError as e:
+        raise Failure(http_code(e))
     except Exception:
         raise Failure('offline')
-    shown = og_image(page.decode('utf-8', 'replace'))
+
+
+def resolve(url):
+    """Where an app's share link goes. Asked as a desktop browser, since Facebook sends a phone
+    with no login to a login page instead of the post."""
+    if not SHORT.match(url):
+        return url
+    try:
+        with open_url(url, page=True, desktop=True) as r:
+            final = r.url
+    except Exception:
+        return url
+    p = urllib.parse.urlparse(final)
+    if '/login' in p.path:
+        final = urllib.parse.parse_qs(p.query).get('next', [final])[0]
+    return unwrap(final)
+
+
+def meta_items(page, code):
+    """Every photo and video of a Threads or Instagram post, from the post data in its page. None
+    when the page doesn't carry the post."""
+    post = None
+
+    def walk(o):
+        nonlocal post
+        if isinstance(o, dict):
+            if o.get('code') == code and ('image_versions2' in o or 'carousel_media' in o):
+                post = o
+                return
+            for v in o.values():
+                if post is None:
+                    walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                if post is None:
+                    walk(v)
+
+    for blob in re.findall(r'<script type="application/json"[^>]*>(.*?)</script>', page, re.S):
+        if code in blob:
+            try:
+                walk(json.loads(blob))
+            except ValueError:
+                pass
+        if post is not None:
+            break
+    if post is None:
+        return None
+    biggest = lambda xs: max(xs or [{}], key=lambda c: (c.get('width') or 0) * (c.get('height') or 0))
+    out = []
+    for m in post.get('carousel_media') or [post]:
+        still = biggest((m.get('image_versions2') or {}).get('candidates'))
+        moving = biggest(m.get('video_versions'))
+        if moving.get('url'):
+            out.append({'kind': 'video', 'src': moving['url'], 'thumb': still.get('url')})
+        elif still.get('url'):
+            out.append({'kind': 'image', 'src': still['url'], 'thumb': still['url']})
+    return named(out, f"{(post.get('user') or {}).get('username') or ''} {code}")
+
+
+def x_token(tid):
+    """The token X's embedded posts send with an id: (id / 1e15 * pi) in base 36, zeros and point dropped."""
+    n = int(tid) / 1e15 * 3.141592653589793
+    whole, frac, digits = int(n), n - int(n), '0123456789abcdefghijklmnopqrstuvwxyz'
+    s = ''
+    while whole:
+        whole, d = divmod(whole, 36)
+        s = digits[d] + s
+    f = ''
+    for _ in range(11):
+        frac *= 36
+        f += digits[int(frac)]
+        frac -= int(frac)
+    return re.sub(r'0+|\.', '', (s or '0') + '.' + f)
+
+
+def x_items(tid):
+    """Every photo and video of a post on X, from the API its embedded posts use. None when the API
+    doesn't answer."""
+    try:
+        data = json.loads(get(f'https://cdn.syndication.twimg.com/tweet-result?id={tid}&lang=en&token={x_token(tid)}')[0])
+    except Exception:
+        return None
+    out = []
+    for m in data.get('mediaDetails') or []:
+        still = m.get('media_url_https')
+        if m.get('type') == 'photo' and still:
+            out.append({'kind': 'image', 'src': upgrade(still) or still, 'alts': [still], 'thumb': still})
+        else:
+            mp4 = [v for v in (m.get('video_info') or {}).get('variants') or [] if v.get('content_type') == 'video/mp4']
+            if mp4:
+                out.append({'kind': 'video', 'src': max(mp4, key=lambda v: v.get('bitrate') or 0)['url'], 'thumb': still})
+    return named(out, f"{(data.get('user') or {}).get('screen_name') or ''} {tid}") or None
+
+
+def named(items, stem):
+    stem = clean_name(stem.strip())
+    for i, it in enumerate(items):
+        it['name'] = stem if len(items) == 1 else f'{stem} ({i + 1})'
+    return items
+
+
+def page_items(url):
+    """A page's photos: a Threads or Instagram post's own, else its share image, full size on X and
+    Pinterest. For links with no video."""
+    page, final = page_of(url)
+    code = META_POST.match(final)
+    found = meta_items(page, code.group(1)) if code else None
+    if found is not None:
+        return found
+    shown = og_image(page)
     # ponytail: name-based, a site whose logo file is called something else still gets its logo saved
     if not shown or SITE_ART.search(urllib.parse.urlparse(shown).path.rsplit('/', 1)[-1]):
         raise Failure('nothing')
-    shown = urllib.parse.urljoin(url, shown)
-    progress.report('saving', -1.0)
-    refused = False
-    for src in dict.fromkeys(filter(None, [upgrade(shown), shown])):
+    shown = urllib.parse.urljoin(final, shown)
+    stem = os.path.splitext(os.path.basename(urllib.parse.urlparse(shown).path))[0]
+    return named([{'kind': 'image', 'src': upgrade(shown) or shown, 'alts': [shown], 'thumb': shown}], stem or 'image')
+
+
+def fetch(item, referer, out_dir, progress, lo, span):
+    """Saves an item's file, trying its full-size address first and the shown copy after."""
+    refused = None
+    for src in dict.fromkeys([item['src'], *item.get('alts', [])]):
         try:
-            data, kind = get(src, referer=url)
-        except Exception:
-            refused = True  # rate limits and blocks: the image is there, the site won't send it
-            continue
-        if kind in IMAGE_TYPES:
-            stem = os.path.splitext(os.path.basename(urllib.parse.urlparse(src).path))[0]
-            path = unique(out_dir, clean_name(stem or 'image'), IMAGE_TYPES[kind])
-            with open(path, 'wb') as f:
-                f.write(data)
-            return [path]
-    raise Failure('refused' if refused else 'nothing')
+            with open_url(src, referer) as r:
+                kind = r.headers.get_content_type()
+                if kind not in FILE_TYPES:
+                    refused = refused or 'nothing'  # a web page or a login wall, not the file
+                    continue
+                total, done = int(r.headers.get('Content-Length') or 0), 0
+                path = unique(out_dir, item['name'], FILE_TYPES[kind])
+                with open(path, 'wb') as f:
+                    while chunk := r.read(1 << 16):
+                        f.write(chunk)
+                        done += len(chunk)
+                        if total:
+                            progress.report('saving', lo + span * done / total)
+                return path
+        except urllib.error.HTTPError as e:
+            refused = http_code(e)
+        except OSError:
+            refused = refused or 'offline'
+    raise Failure(refused or 'nothing')
 
 
-def video(yt_dlp, url, out_dir, progress, fmt=None, opts=None):
-    progress.report('reading', -1.0)
-    base = {'quiet': True, 'no_warnings': True, 'noplaylist': True, 'noprogress': True,
-            'updatetime': False, 'cachedir': False, 'paths': {'home': out_dir}, **(opts or {})}
-
+def extract(yt_dlp, url, base):
+    """yt-dlp's info for a link. A site reader that crashed or broke gets a second try with the
+    generic reader, which finds a video named in og:video, JSON-LD or a <video> tag."""
     def read(**extra):
         with yt_dlp.YoutubeDL(dict(base, **extra)) as ydl:
             return ydl.extract_info(url, download=False)
@@ -178,35 +324,32 @@ def video(yt_dlp, url, out_dir, progress, fmt=None, opts=None):
         info = read()
         if not info:  # the site's extractor found nothing
             raise Failure('nothing')
+        return info
     except yt_dlp.utils.DownloadError as e:
         if code_for(str(e)) != 'broken':
             raise Failure(code_for(str(e)))
-        info = None
     except Failure:
         raise
     except Exception:  # an extractor that crashes outright
+        pass
+    try:
+        info = read(force_generic_extractor=True)
+    except Exception:
         info = None
-    if info is None:
-        # The site changed under its extractor. The page may still name its video in og:video,
-        # JSON-LD or a <video> tag, which the generic extractor reads.
-        try:
-            info = read(force_generic_extractor=True)
-        except Exception:
-            pass
-        if not info:
-            raise Failure('broken')
-    if info.get('_type') == 'playlist':
-        # ponytail: the first item of a carousel only, save each entry when someone needs carousels
-        info = next((e for e in info.get('entries') or [] if e), None)
-        if not info:
-            raise Failure('nothing')
+    if not info:
+        raise Failure('broken')
+    return info
 
-    def fetch(chosen, template, lo, span):
+
+def download(yt_dlp, info, base, out_dir, progress, fmt, lo, span):
+    """Downloads one video yt-dlp read: {"files": [...]}, with "join" when the files are a video and
+    an audio track for MediaMuxer to join."""
+    def one(chosen, template, start, width):
         def hook(d):
             total = d.get('total_bytes') or d.get('total_bytes_estimate')
             if d.get('status') == 'downloading' and total:
-                progress.report('saving', lo + span * d.get('downloaded_bytes', 0) / total)
-        opts = dict(base, outtmpl=template, progress_hooks=[hook])
+                progress.report('saving', start + width * d.get('downloaded_bytes', 0) / total)
+        opts = dict(base, outtmpl=template, progress_hooks=[hook], paths={'home': out_dir})
         if chosen:
             opts['format'] = chosen
         try:
@@ -216,42 +359,108 @@ def video(yt_dlp, url, out_dir, progress, fmt=None, opts=None):
                 done = ydl.process_ie_result(yt_dlp.YoutubeDL.sanitize_info(info, remove_private_keys=True), download=True)
         except yt_dlp.utils.DownloadError as e:
             raise Failure(code_for(str(e)))
-        files = [d.get('filepath') for d in done.get('requested_downloads') or []]
+        files = [d.get('filepath') for d in (done or {}).get('requested_downloads') or []]
         files = [f for f in files if f and os.path.isfile(f)]
         if not files:
             raise Failure('nothing')
         return files[0]
 
-    name = '%(title).70B [%(id)s].%(ext)s'
+    stem = f"{clean_name(info.get('title') or '')} [{clean_name(str(info.get('id') or ''))}]"
     choice = None if fmt else pick(info)
     if choice and choice[1]:
-        parts = [fetch(choice[0], 'part-v.%(ext)s', 0, 85), fetch(choice[1], 'part-a.%(ext)s', 85, 12)]
-        stem = f"{clean_name(info.get('title') or '')} [{clean_name(str(info.get('id') or ''))}]"
+        tag = clean_name(str(info.get('id') or 'x'))
+        parts = [one(choice[0], f'part-{tag}-v.%(ext)s', lo, span * 0.85),
+                 one(choice[1], f'part-{tag}-a.%(ext)s', lo + span * 0.85, span * 0.12)]
         return {'files': parts, 'join': f'{stem}.mp4'}
-    return {'files': [fetch(fmt or (choice[0] if choice else None), name, 0, 100)]}
+    return {'files': [one(fmt or (choice[0] if choice else None), '%(title).70B [%(id)s].%(ext)s', lo, span)]}
 
 
-def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None):
-    url = unwrap(url.strip())
+def thumbnail(item, referer, folder, i):
+    """A small copy of an item's preview for the picker, or '' when the site won't send one."""
+    if not item.get('thumb'):
+        return ''
     try:
+        data, kind = get(item['thumb'], referer, limit=4_000_000)
+    except Exception:
+        return ''
+    if kind not in IMAGE_TYPES:
+        return ''
+    path = os.path.join(folder, f'thumb-{i}.{IMAGE_TYPES[kind]}')
+    with open(path, 'wb') as f:
+        f.write(data)
+    return path
+
+
+def items_of(yt_dlp, url, base):
+    """Every photo and video a link leads to. Site readers come first: they see a post's photos too,
+    where yt-dlp sees its videos only."""
+    if m := META_POST.match(url):
+        try:
+            page, _ = page_of(url)
+            items = meta_items(page, m.group(1))
+        except Failure:
+            items = None
+        if items == []:
+            raise Failure('nothing')  # a post with text only
+        if items:
+            return items
+    elif m := X_POST.match(url):
+        if items := x_items(m.group(1)):
+            return items
+    try:
+        info = extract(yt_dlp, url, base)
+        entries = [e for e in info.get('entries') or []] if info.get('_type') == 'playlist' else [info]
+        items = named([{'kind': 'video', 'info': e, 'thumb': e.get('thumbnail')} for e in entries if e],
+                      f"{info.get('title') or ''} [{info.get('id') or ''}]")
+        if not items:
+            raise Failure('nothing')
+        return items
+    except Failure as f:
+        # A YouTube page's share image is the thumbnail, not what anyone asked for.
+        if str(f) != 'nothing' or re.match(r'https?://([\w-]+\.)*(youtube\.com|youtu\.be)/', url):
+            raise
+        return page_items(url)
+
+
+def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None, pick_items=None, thumbs=None):
+    """Saves a link. A post with several photos or videos answers {"choose": [{"kind", "thumb"}]}
+    first, with a preview of each written to `thumbs`; save it again with pick_items ("0,2") to save
+    those. Otherwise {"saves": [{"index", "files", "join"?}], "failed": n} or {"error": code}."""
+    try:
+        url = unwrap(url.strip())
         if not re.match(r'https?://\S+$', url):
             raise Failure('nothing')
+        progress.report('reading', -1.0)
+        url = resolve(url)
         if ytdlp_zip not in sys.path:
             sys.path.insert(0, ytdlp_zip)
         import yt_dlp
-        opts = {}
+        base = {'quiet': True, 'no_warnings': True, 'noplaylist': True, 'noprogress': True,
+                'updatetime': False, 'cachedir': False}
         if qjs and os.path.isfile(qjs):
             # YouTube's challenges run in QuickJS, with the solver script the zipapp carries. The
             # cache keeps YouTube's player script between saves.
-            opts = {'js_runtimes': {'quickjs': {'path': qjs}},
-                    'cachedir': os.path.join(os.path.dirname(ytdlp_zip), 'yt-dlp-cache')}
-        try:
-            return json.dumps(video(yt_dlp, url, out_dir, progress, fmt, opts))
-        except Failure as f:
-            # A YouTube page's share image is the thumbnail, not what anyone asked for.
-            if str(f) != 'nothing' or re.match(r'https?://([\w-]+\.)*(youtube\.com|youtu\.be)/', url):
-                raise
-            return json.dumps({'files': image(url, out_dir, progress)})
+            base.update({'js_runtimes': {'quickjs': {'path': qjs}},
+                         'cachedir': os.path.join(os.path.dirname(ytdlp_zip), 'yt-dlp-cache')})
+        items = items_of(yt_dlp, url, base)
+        if pick_items is None and len(items) > 1:
+            folder = thumbs or out_dir
+            os.makedirs(folder, exist_ok=True)
+            return json.dumps({'choose': [{'kind': it['kind'], 'thumb': thumbnail(it, url, folder, i)} for i, it in enumerate(items)]})
+        chosen = [0] if pick_items is None else [int(i) for i in str(pick_items).split(',') if i.strip().isdigit() and int(i) < len(items)]
+        saves, failure = [], None
+        for n, i in enumerate(chosen):
+            lo, span = 100 * n / len(chosen), 100 / len(chosen)
+            try:
+                if 'info' in items[i]:
+                    saves.append({'index': i, **download(yt_dlp, items[i]['info'], base, out_dir, progress, fmt, lo, span)})
+                else:
+                    saves.append({'index': i, 'files': [fetch(items[i], url, out_dir, progress, lo, span)]})
+            except Failure as f:
+                failure = failure or str(f)
+        if not saves:
+            raise Failure(failure or 'nothing')
+        return json.dumps({'saves': saves, 'failed': len(chosen) - len(saves)})
     except Failure as f:
         return json.dumps({'error': str(f)})
     except Exception as e:  # anything unexpected still reaches the screen as text
@@ -289,6 +498,20 @@ if __name__ == '__main__':
     assert code_for('ERROR: [x] 1: Unable to download webpage: HTTP Error 503: Service Unavailable') == 'offline'
     assert code_for('ERROR: [youtube] a: Video unavailable. This video is not available in your country') == 'refused'
     assert json.loads(save('not a link', '.', '', None)) == {'error': 'nothing'}
+    carousel = {'code': 'ABC', 'user': {'username': 'nasa'}, 'carousel_media': [
+        {'image_versions2': {'candidates': [{'url': 'https://x.test/s.jpg', 'width': 150, 'height': 150},
+                                            {'url': 'https://x.test/b.jpg', 'width': 1080, 'height': 1080}]}},
+        {'image_versions2': {'candidates': [{'url': 'https://x.test/t.jpg', 'width': 640, 'height': 640}]},
+         'video_versions': [{'url': 'https://x.test/v.mp4', 'width': 720, 'height': 1280}]}]}
+    page = f'<script type="application/json" data-sjs>{json.dumps({"a": [{"code": "ABC"}, carousel]})}</script>'
+    assert [(i['kind'], i['src'], i['name']) for i in meta_items(page, 'ABC')] == [
+        ('image', 'https://x.test/b.jpg', 'nasa ABC (1)'), ('video', 'https://x.test/v.mp4', 'nasa ABC (2)')]
+    assert meta_items(page, 'XYZ') is None
+    assert META_POST.match('https://www.threads.com/@nasa/post/Decc755lYhC?xmt=AQF0').group(1) == 'Decc755lYhC'
+    assert META_POST.match('https://www.instagram.com/reel/C1a2b3/?igsh=x').group(1) == 'C1a2b3'
+    assert X_POST.match('https://x.com/elonmusk/status/1585341984679469056?s=46').group(1) == '1585341984679469056'
+    assert x_token('1585341984679469056').startswith('3uchycv2wq')
+    assert SHORT.match('https://www.facebook.com/share/r/1AbC/') and SHORT.match('https://vt.tiktok.com/ZS1/') and not SHORT.match('https://www.tiktok.com/@a/video/1')
     assert unwrap('https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.tiktok.com%2F%40a%2Fvideo%2F1%3Fx%3D1&h=AT0') == 'https://www.tiktok.com/@a/video/1?x=1'
     assert unwrap('https://www.google.com/url?q=https://x.com/a/status/1&sa=D') == 'https://x.com/a/status/1'
     assert unwrap('https://www.facebook.com/reel/1?u=https://evil.test/') == 'https://www.facebook.com/reel/1?u=https://evil.test/'
