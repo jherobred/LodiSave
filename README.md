@@ -32,7 +32,10 @@ Saves go to `Downloads\LodiSave`. If Windows Security's Controlled folder access
 
 The Android app in `android/` saves the same way, without a browser:
 
-- **Share** a link, photo or video to LodiSave from any app. Lodi floats up while it saves.
+- **Share** a link, photo or video to LodiSave from any app. Lodi floats up while it saves. Threads, Instagram, X, Facebook, TikTok and YouTube share links all save the original file.
+- **Pick from a post.** A post with several photos or videos shows them all with round checkboxes, like the PC picker. Tick some or all, then save at once.
+- **Several at once.** Share or paste more links while one is saving. They save side by side, each with its own bar.
+- **Floating Lodi** (Settings) sits over every app. Tap Copy link on a post, then tap Lodi, and he saves the original file. Drag him to either edge, hold him to hide him.
 - **The round home-screen widget** saves the link you copied in one tap.
 - Saves go to `Pictures/LodiSave`, `Movies/LodiSave` and `Music/LodiSave`, so the gallery shows them.
 - Separate video and audio are joined with Android's own MediaMuxer, so there's no FFmpeg here either.
