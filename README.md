@@ -37,14 +37,15 @@ The Android app in `android/` saves the same way, without a browser:
 - Saves go to `Pictures/LodiSave`, `Movies/LodiSave` and `Music/LodiSave`, so the gallery shows them.
 - Separate video and audio are joined with Android's own MediaMuxer, so there's no FFmpeg here either.
 
-Install `LodiSave-0.2.0-android.apk` from [Releases](https://github.com/jherobred/LodiSave/releases) (allow installs from your browser or file manager when Android asks). YouTube doesn't work on Android, because YouTube now needs a JavaScript runtime that the app doesn't have yet. The Windows app saves YouTube links.
+Install `LodiSave-0.2.0-android.apk` from [Releases](https://github.com/jherobred/LodiSave/releases) (allow installs from your browser or file manager when Android asks). YouTube's challenges run in [QuickJS](https://github.com/quickjs-ng/quickjs), which ships inside the app.
 
 ## Limits
 
 - DRM-protected video is refused. LodiSave doesn't decrypt.
 - The extension skips YouTube, as Chrome Web Store rules require. The tray app saves YouTube links.
 - A stream saves what the player has loaded. Play it to the end to save all of it.
-- Posts behind a login need the extension in your signed-in browser.
+- Posts behind a login need the extension in your signed-in browser. Reddit now needs a login for every video.
+- Some sites block whole networks or regions (TikTok blocks some posts by IP, Rumble and Newgrounds refuse many networks). LodiSave says so instead of failing silently.
 
 ## Privacy
 
@@ -67,6 +68,8 @@ The Android app needs JDK 17+, the Android SDK (platform 36) and Python 3.14 on 
 cd android
 ./gradlew assembleDebug
 ```
+
+QuickJS is checked in as `android/app/src/main/jniLibs/<abi>/libqjs.so`. `pwsh scripts/build-quickjs.ps1` rebuilds it from source with the Android NDK.
 
 `npm test` runs the extension on local fixture pages in Edge and checks every saved file against its original. The release script writes the installer, the portable app, the extension zip and `SHA256SUMS.txt` to `dist/`.
 
