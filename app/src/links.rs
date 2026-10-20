@@ -1,5 +1,7 @@
-//! Saving a copied link. Videos go through yt-dlp, which LodiSave fetches on first use. Pages with
-//! no video fall back to their og:image. Progress reaches the panel as `job://progress` events.
+//! Saving a copied link. Threads, Instagram and X posts go through LodiSave's own readers first,
+//! which see every photo and video of a post, as in android/app/src/main/python/lodi.py. Other
+//! videos go through yt-dlp, which LodiSave fetches on first use. Pages with no video fall back to
+//! their og:image. Progress reaches the panel as `job://progress` events.
 //! Errors are short codes the panel translates ("login", "nothing", "offline", "helper"), or
 //! yt-dlp's own message.
 
@@ -332,14 +334,235 @@ fn upgrade(url: &str) -> Option<String> {
     }
 }
 
+/// What a browser sends for a page. Threads and Instagram send a post's data only to browsers.
+const PAGE: [&str; 7] = [
+    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language: en-US,en;q=0.9",
+    "Sec-Fetch-Dest: document",
+    "Sec-Fetch-Mode: navigate",
+    "Sec-Fetch-Site: none",
+    "Sec-Fetch-User: ?1",
+    "Upgrade-Insecure-Requests: 1",
+];
+const FILE_TYPES: [(&str, &str); 10] = [
+    ("image/jpeg", "jpg"), ("image/png", "png"), ("image/webp", "webp"), ("image/gif", "gif"), ("image/avif", "avif"),
+    ("video/mp4", "mp4"), ("video/webm", "webm"), ("video/quicktime", "mov"), ("audio/mp4", "m4a"), ("audio/mpeg", "mp3"),
+];
+
+fn browser(args: &[&str]) -> Command {
+    let mut c = curl(&[]);
+    for h in PAGE {
+        c.args(["-H", h]);
+    }
+    c.args(args);
+    c
+}
+
+/// A page's HTML and final address, as a browser gets them.
+fn page_of(url: &str) -> Option<(String, String)> {
+    let out = browser(&["--max-filesize", "8000000", "-w", "\n%{url_effective}", "--"]).arg(url).output().ok().filter(|o| o.status.success())?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (page, last) = text.rsplit_once('\n')?;
+    Some((page.into(), last.into()))
+}
+
+/// Share links from the apps' Share buttons, which redirect to the post.
+fn short(url: &str) -> bool {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).unwrap_or("");
+    ["www.facebook.com/share/", "m.facebook.com/share/", "web.facebook.com/share/", "fb.watch/", "pin.it/", "vm.tiktok.com/", "vt.tiktok.com/", "t.co/",
+     "instagram.com/share/", "www.instagram.com/share/", "threads.net/", "www.threads.net/"]
+        .iter()
+        .any(|p| rest.starts_with(p))
+}
+
+/// Where an app's share link goes. Asked as a desktop browser, since Facebook sends a phone with
+/// no login to a login page instead of the post.
+fn resolve(url: &str) -> String {
+    if !short(url) {
+        return url.into();
+    }
+    let Some(out) = browser(&["-o", "NUL", "-w", "%{url_effective}", "--"]).arg(url).output().ok().filter(|o| o.status.success()) else {
+        return url.into();
+    };
+    let last = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let (before, query) = last.split_once('?').unwrap_or((&last, ""));
+    let next = before.contains("/login").then(|| query.split('&').find_map(|p| p.strip_prefix("next=")).map(decode)).flatten();
+    unwrap(next.as_deref().filter(|n| n.starts_with("http")).unwrap_or(&last))
+}
+
+/// A photo or video a site reader found: its addresses, full size first, and its file name.
+#[derive(Debug, PartialEq)]
+struct Item {
+    srcs: Vec<String>,
+    name: String,
+}
+
+fn named(found: Vec<Vec<String>>, stem: &str) -> Vec<Item> {
+    let (stem, n) = (clean_name(stem.trim()), found.len());
+    found.into_iter().enumerate().map(|(i, srcs)| Item { srcs, name: if n == 1 { stem.clone() } else { format!("{stem} ({})", i + 1) } }).collect()
+}
+
+fn word(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+}
+
+/// The post code in a Threads or Instagram post link.
+fn meta_code(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let parts: Vec<&str> = rest.split(['?', '#']).next()?.split('/').collect();
+    let code = match parts.as_slice() {
+        ["threads.com" | "threads.net", user, "post", code, ..] if user.starts_with('@') => code,
+        ["instagram.com", "p" | "reel" | "reels" | "tv", code, ..] | ["instagram.com", _, "p" | "reel" | "reels" | "tv", code, ..] => code,
+        _ => return None,
+    };
+    word(code).then_some(*code)
+}
+
+/// Every photo and video of a Threads or Instagram post, from the post data in its page. None
+/// when the page doesn't carry the post.
+fn meta_items(page: &str, code: &str) -> Option<Vec<Item>> {
+    fn find<'a>(v: &'a Value, code: &str) -> Option<&'a Value> {
+        match v {
+            Value::Object(o) if o.get("code").and_then(Value::as_str) == Some(code) && (o.contains_key("image_versions2") || o.contains_key("carousel_media")) => Some(v),
+            Value::Object(o) => o.values().find_map(|v| find(v, code)),
+            Value::Array(a) => a.iter().find_map(|v| find(v, code)),
+            _ => None,
+        }
+    }
+    let post = page
+        .split(r#"<script type="application/json""#)
+        .skip(1)
+        .filter_map(|b| b.split_once('>').map(|(_, b)| b.split("</script>").next().unwrap_or("")))
+        .filter(|b| b.contains(code))
+        .filter_map(|b| serde_json::from_str::<Value>(b).ok())
+        .find_map(|v| find(&v, code).cloned())?;
+    let biggest = |v: &Value| -> Option<String> {
+        let area = |c: &&Value| c["width"].as_u64().unwrap_or(0) * c["height"].as_u64().unwrap_or(0);
+        v.as_array()?.iter().max_by_key(area)?["url"].as_str().map(str::to_string)
+    };
+    let media = post["carousel_media"].as_array().filter(|a| !a.is_empty()).map_or(vec![&post], |a| a.iter().collect());
+    let found = media.iter().filter_map(|m| biggest(&m["video_versions"]).or_else(|| biggest(&m["image_versions2"]["candidates"]))).map(|s| vec![s]).collect();
+    Some(named(found, &format!("{} {code}", post["user"]["username"].as_str().unwrap_or(""))))
+}
+
+/// The id in a link to a post on X.
+fn x_id(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let rest = rest.strip_prefix("www.").or_else(|| rest.strip_prefix("mobile.")).unwrap_or(rest);
+    match rest.split(['?', '#']).next()?.split('/').collect::<Vec<_>>().as_slice() {
+        ["x.com" | "twitter.com", user, "status" | "statuses", id, ..] if word(user) && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) => Some(id),
+        _ => None,
+    }
+}
+
+/// The token X's embedded posts send with an id: (id / 1e15 * pi) in base 36, zeros and point dropped.
+fn x_token(id: &str) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let n = id.parse::<f64>().unwrap_or(0.0) / 1e15 * std::f64::consts::PI;
+    let (mut whole, mut frac, mut s) = (n.trunc() as u64, n.fract(), Vec::new());
+    while whole > 0 {
+        s.insert(0, DIGITS[(whole % 36) as usize]);
+        whole /= 36;
+    }
+    for _ in 0..11 {
+        frac *= 36.0;
+        s.push(DIGITS[frac.trunc() as usize]);
+        frac = frac.fract();
+    }
+    String::from_utf8_lossy(&s).replace('0', "")
+}
+
+/// Every photo and video of a post on X, from the API its embedded posts use. None when the API
+/// doesn't answer.
+fn x_items(id: &str) -> Option<Vec<Item>> {
+    let api = format!("https://cdn.syndication.twimg.com/tweet-result?id={id}&lang=en&token={}", x_token(id));
+    let data: Value = serde_json::from_slice(&curl(&["--"]).arg(api).output().ok()?.stdout).ok()?;
+    let found: Vec<Vec<String>> = data["mediaDetails"]
+        .as_array()?
+        .iter()
+        .filter_map(|m| match m["media_url_https"].as_str() {
+            Some(still) if m["type"] == "photo" => Some(upgrade(still).into_iter().chain([still.to_string()]).collect()),
+            _ => {
+                let mp4 = m["video_info"]["variants"].as_array()?.iter().filter(|v| v["content_type"] == "video/mp4");
+                Some(vec![mp4.max_by_key(|v| v["bitrate"].as_u64().unwrap_or(0))?["url"].as_str()?.to_string()])
+            }
+        })
+        .collect();
+    let stem = format!("{} {id}", data["user"]["screen_name"].as_str().unwrap_or(""));
+    Some(named(found, &stem)).filter(|items| !items.is_empty())
+}
+
+/// A post's photos and videos from LodiSave's own readers. None hands the link to yt-dlp.
+fn site_items(url: &str) -> Option<Vec<Item>> {
+    match meta_code(url) {
+        Some(code) => meta_items(&page_of(url)?.0, code),
+        None => x_items(x_id(url)?),
+    }
+}
+
+/// Saves an item's file, trying its full-size address first and the shown copy after.
+fn fetch_item(item: &Item, referer: &str, dir: &Path) -> Result<PathBuf, String> {
+    let part = dir.join(format!(".lodisave-{}.part", std::process::id()));
+    let mut failure = None;
+    for src in &item.srcs {
+        // Videos can be long, so only a stalled transfer times out.
+        let out = command("curl.exe")
+            .args(["-sSL", "--connect-timeout", "30", "--speed-time", "30", "--speed-limit", "1", "-A", UA, "-e", referer])
+            .args(["-w", "%{http_code} %{content_type}", "-o"])
+            .arg(&part)
+            .arg("--")
+            .arg(src)
+            .output();
+        let Some(out) = out.ok().filter(|o| o.status.success()) else {
+            failure.get_or_insert("offline");
+            continue;
+        };
+        let written = String::from_utf8_lossy(&out.stdout);
+        let (status, kind) = written.split_once(' ').unwrap_or((&written, ""));
+        let kind = kind.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let code = match (status, FILE_TYPES.iter().find(|(t, _)| *t == kind)) {
+            ("200", Some((_, ext))) => {
+                let path = unique(dir, &item.name, ext);
+                if std::fs::rename(&part, &path).is_ok() {
+                    return Ok(path);
+                }
+                "blocked"
+            }
+            ("401", _) => "login",
+            ("403" | "429", _) => "refused",
+            ("404" | "410", _) => "gone",
+            (s, _) if !s.starts_with('2') => "offline",
+            // A web page or a login wall, not the file.
+            _ => "nothing",
+        };
+        failure.get_or_insert(code);
+    }
+    let _ = std::fs::remove_file(&part);
+    Err(failure.unwrap_or("nothing").into())
+}
+
+/// Saves every photo and video a site reader found. The panel has no picker, so a post with
+/// several saves them all.
+fn save_items(app: &AppHandle, items: &[Item], referer: &str, dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let (mut saved, mut failure) = (Vec::new(), None);
+    for (i, item) in items.iter().enumerate() {
+        progress(app, "saving", (items.len() > 1).then(|| 100.0 * i as f64 / items.len() as f64));
+        match fetch_item(item, referer, dir) {
+            Ok(p) => saved.push(p),
+            Err(e) => {
+                failure.get_or_insert(e);
+            }
+        }
+    }
+    if saved.is_empty() { Err(failure.unwrap_or_else(|| "nothing".into())) } else { Ok(saved) }
+}
+
 fn image(app: &AppHandle, url: &str, dir: &Path) -> Result<Vec<PathBuf>, String> {
     progress(app, "reading", None);
-    let page = curl(&["--max-filesize", "8000000", "--"]).arg(url).output().map_err(|_| "offline".to_string())?;
-    if !page.status.success() {
-        return Err("offline".into());
-    }
-    let shown = og_image(&String::from_utf8_lossy(&page.stdout)).ok_or("nothing")?;
-    let origin = url.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
+    let (page, last) = page_of(url).ok_or("offline")?;
+    let shown = og_image(&page).ok_or("nothing")?;
+    let origin = last.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
     let shown = if shown.starts_with("//") {
         format!("https:{shown}")
     } else if shown.starts_with('/') {
@@ -372,6 +595,14 @@ pub fn save(app: &AppHandle, url: &str, dir: &Path) -> Result<Vec<PathBuf>, Stri
         return Err("nothing".into());
     }
     crate::writable(dir)?;
+    progress(app, "reading", None);
+    let url = resolve(url);
+    let url = url.as_str();
+    match site_items(url) {
+        Some(items) if items.is_empty() => return Err("nothing".into()), // a post with text only
+        Some(items) => return save_items(app, &items, url, dir),
+        None => {}
+    }
     let exe = ensure_ytdlp(app)?;
     match video(app, &exe, url, dir) {
         Err(code) if code == "nothing" => image(app, url, dir),
@@ -426,5 +657,37 @@ mod tests {
 
         assert!(super::site_art("t_logo_2x.png") && super::site_art("og-default.jpg"));
         assert!(!super::site_art("5645318632_09ff5eef3b_b.jpg"));
+
+        assert!(super::short("https://www.facebook.com/share/r/1AbC/") && super::short("https://vt.tiktok.com/ZS1/") && super::short("https://t.co/x"));
+        assert!(super::short("https://www.threads.net/@a/post/B") && !super::short("https://www.tiktok.com/@a/video/1") && !super::short("https://www.facebook.com/reel/1"));
+    }
+
+    #[test]
+    fn site_readers() {
+        let carousel = json!({ "code": "ABC", "user": { "username": "nasa" }, "carousel_media": [
+            { "image_versions2": { "candidates": [
+                { "url": "https://x.test/s.jpg", "width": 150, "height": 150 },
+                { "url": "https://x.test/b.jpg", "width": 1080, "height": 1080 }] } },
+            { "image_versions2": { "candidates": [{ "url": "https://x.test/t.jpg", "width": 640, "height": 640 }] },
+              "video_versions": [{ "url": "https://x.test/v.mp4", "width": 720, "height": 1280 }] },
+        ]});
+        let page = format!(r#"<script type="application/json" data-sjs>{}</script>"#, json!({ "a": [{ "code": "ABC" }, carousel] }));
+        let items = super::meta_items(&page, "ABC").unwrap();
+        let got: Vec<(&str, &str)> = items.iter().map(|i| (i.srcs[0].as_str(), i.name.as_str())).collect();
+        assert_eq!(got, [("https://x.test/b.jpg", "nasa ABC (1)"), ("https://x.test/v.mp4", "nasa ABC (2)")]);
+        assert_eq!(super::meta_items(&page, "XYZ"), None);
+        let single = format!(r#"<script type="application/json">{}</script>"#, json!({ "code": "Q", "image_versions2": { "candidates": [{ "url": "https://x.test/q.jpg" }] } }));
+        assert_eq!(super::meta_items(&single, "Q").unwrap()[0].name, "Q");
+
+        assert_eq!(super::meta_code("https://www.threads.com/@nasa/post/Decc755lYhC?xmt=AQF0"), Some("Decc755lYhC"));
+        assert_eq!(super::meta_code("https://www.instagram.com/reel/C1a2b3/?igsh=x"), Some("C1a2b3"));
+        assert_eq!(super::meta_code("https://www.instagram.com/nasa/p/BQ0e-Al_w/"), Some("BQ0e-Al_w"));
+        assert_eq!(super::meta_code("https://www.instagram.com/nasa/"), None);
+        assert_eq!(super::x_id("https://x.com/elonmusk/status/1585341984679469056?s=46"), Some("1585341984679469056"));
+        assert_eq!(super::x_id("https://x.com/i/spaces/1"), None);
+        // Tokens from x_token in lodi.py.
+        assert_eq!(super::x_token("1585341984679469056"), "3uchycv2wqcdge");
+        assert_eq!(super::x_token("266031293945503744"), "n7rfhxzwhkcjm");
+        assert_eq!(super::x_token("20"), "6dq");
     }
 }
