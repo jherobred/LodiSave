@@ -118,9 +118,12 @@
   function best(items) {
     let top = items.filter(usable).sort((a, b) => rank(a) - rank(b))[0];
     if (top?.via === 'mse') {
-      // A buffered capture can be partial. One known manifest in the frame is the whole stream.
+      // A buffered capture can be partial. One known manifest in the frame is the whole stream, as
+      // is a master playlist the others are named after (Pinterest's x.m3u8 and x_720w.m3u8).
       const manifests = [...loaded].filter((u) => /^(hls|dash)$/.test(LodiFinder.kindOf(u) || ''));
-      if (manifests.length === 1) top = { url: manifests[0], kind: LodiFinder.kindOf(manifests[0]), via: 'network', page: location.href };
+      const stem = (u) => u.split(/[?#]/)[0].replace(/\.(m3u8|mpd)$/i, '');
+      const whole = manifests.find((m) => manifests.every((o) => stem(o).startsWith(stem(m))));
+      if (whole) top = { url: whole, kind: LodiFinder.kindOf(whole), via: 'network', page: location.href };
     }
     return top;
   }

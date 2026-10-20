@@ -14,7 +14,9 @@ var LodiFinder = (() => {
   const NO_CSS = new Set(['head', 'meta', 'link', 'script', 'style', 'title', 'noscript', 'template', 'base', 'source', 'track', 'br', 'wbr', 'option']);
   const OG_IMAGE = /^(og:image(:secure_url|:url)?|twitter:image(:src)?)$/i;
   const OG_VIDEO = /^(og:video(:secure_url|:url)?|twitter:player:stream)$/i;
+  const PLAYER_PAGE = /\.(html?|php|aspx?)$|\/(embed|player)(\/|$)/i;
   const RESOURCE_KIND = { img: 'image', image: 'image', video: 'video', audio: 'audio' };
+  const SEGMENT = /\.(ts|m4s|m4f|cmf[va])$|\/(seg|segment|chunk|frag)[-_]?\d+/i;
 
   function kindOf(url) {
     if (url.startsWith('data:')) return /^data:(image|video|audio)\//.exec(url)?.[1] || null;
@@ -94,7 +96,8 @@ var LodiFinder = (() => {
     if (tag === 'meta') {
       const key = el.getAttribute('property') || el.getAttribute('name') || '';
       if (OG_IMAGE.test(key)) add(el.content, 'image', 'meta', base);
-      else if (OG_VIDEO.test(key)) add(el.content, null, 'meta', base);
+      // Sites often name their player page here (Dailymotion, Bilibili), which is no video file.
+      else if (OG_VIDEO.test(key) && !PLAYER_PAGE.test(el.content.split(/[?#]/)[0])) add(el.content, null, 'meta', base);
       return;
     }
     if (NO_CSS.has(tag)) return;
@@ -153,7 +156,8 @@ var LodiFinder = (() => {
     walk(doc, add);
     // Catches media loaded by scripts that never touches the DOM (new Image(), fetch, CSS).
     for (const e of doc.defaultView?.performance.getEntriesByType('resource') || []) {
-      const kind = kindOf(e.name) || RESOURCE_KIND[e.initiatorType];
+      // A player streaming HLS or DASH itself loads seconds-long segments, which aren't videos.
+      const kind = kindOf(e.name) || (!SEGMENT.test(e.name.split(/[?#]/)[0]) && RESOURCE_KIND[e.initiatorType]);
       if (kind) add(e.name, kind, 'network', doc.baseURI);
     }
   }

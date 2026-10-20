@@ -281,6 +281,14 @@ await check('G5 Memory cap frees finished streams first', 'popup scan', async ()
   return 'the finished stream was freed, both playing ones kept';
 });
 
+await check('Web page as a video, file URL with no extension', 'service worker', async () => {
+  const r = await save(1, { url: `${PAGE}/misc.html`, kind: 'video', via: 'meta', page: `${PAGE}/` });
+  if (!/web page/.test(r.error || '')) throw new Error(`a web page was saved as a video: ${JSON.stringify(r)}`);
+  // Instagram and Facebook video URLs end in an id. The name gets its extension from the file's type.
+  const ok = await save(1, { url: `${PAGE}/noext/a`, kind: 'image', via: 'img', page: `${PAGE}/` });
+  return `web page refused and not kept, ${same(ok, original('a.jpg'))} from a URL with no extension`;
+});
+
 await check('G4 Full-size URL falls back to the page copy', 'service worker', async () => {
   const r = await save(1, { url: `${PAGE}/media/missing-original.jpg`, alts: [`${PAGE}/media/a.jpg?shown`], kind: 'image', via: 'img', page: `${PAGE}/` });
   return `${same(r, original('a.jpg'))} after the original 404ed`;
@@ -298,9 +306,10 @@ await check('G4 Full-size URL falls back to the page copy', 'service worker', as
     for (const [what, tail] of Object.entries(want)) find(res, (i) => i.url.endsWith(tail), what);
     find(res, (i) => i.via === 'svg', 'inline SVG');
     if (res.items.some((i) => isYouTube(i.url))) throw new Error('the YouTube og:video leaked into results');
+    if (res.items.some((i) => i.url.includes('player.html'))) throw new Error('a player page was listed as a video');
     const r = await save(tabId, find(res, (i) => i.url.endsWith('large.jpg?srcset'), 'srcset'));
     same(r, original('large.jpg'));
-    return `${Object.keys(want).length + 1} source types found, srcset saved at 1600w, YouTube og:video dropped`;
+    return `${Object.keys(want).length + 1} source types found, srcset saved at 1600w, YouTube og:video and player page dropped`;
   });
   await check('Popup grid', 'popup UI', async () => {
     const popup = await context.newPage();

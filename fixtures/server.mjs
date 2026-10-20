@@ -20,6 +20,8 @@ function handle(req, res) {
     if (!(req.headers.referer || '').startsWith(PAGE + '/')) return res.writeHead(403).end('hotlink blocked');
     p = '/media/' + p.slice('/hotlink/'.length);
   }
+  // A CDN path with no extension, like Instagram's and Facebook's video URLs.
+  if (p.startsWith('/noext/')) p = '/media/' + p.slice('/noext/'.length) + '.jpg';
   if (p === '/') p = '/index.html';
   const file = path.join(root, p);
   if (!file.startsWith(root + path.sep) || file.includes('node_modules')) return res.writeHead(403).end();

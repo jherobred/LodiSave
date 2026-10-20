@@ -49,10 +49,30 @@ function finished(id) {
   });
 }
 
+// Names LodiSave asked for, by download URL. Chrome drops a requested name once an extension
+// listens to onDeterminingFilename, so the listener hands it back, with the extension Chrome found
+// from the file's type when the URL had none (Instagram and Facebook video URLs have none).
+const wanted = new Map();
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  const want = item.byExtensionId === chrome.runtime.id && wanted.get(item.url);
+  if (!want) return suggest();
+  wanted.delete(item.url);
+  const ext = /\.[a-z0-9]{2,5}$/i, found = ext.exec(item.filename)?.[0];
+  suggest({ filename: ext.test(want) || !found ? want : want + found, conflictAction: 'uniquify' });
+});
+
 async function saveUrl(url, filename) {
   try {
+    wanted.set(url, 'LodiSave/' + filename);
     const id = await chrome.downloads.download({ url, filename: 'LodiSave/' + filename, conflictAction: 'uniquify', saveAs: false });
     const it = await finished(id);
+    wanted.delete(url);
+    // LodiSave only saves media. A web page here is a site's player page or a login wall.
+    if (it.state === 'complete' && /^text\/html/.test(it.mime || '')) {
+      await chrome.downloads.removeFile(id).catch(() => {});
+      chrome.downloads.erase({ id });
+      return { error: 'That link is a web page, not the file. Play the video, then save it.' };
+    }
     return it.state === 'complete' ? { ok: true, id, filename: it.filename, bytes: it.fileSize } : { error: `Download failed: ${it.error}`, code: it.error, id };
   } catch (e) {
     return { error: e.message || String(e) };
