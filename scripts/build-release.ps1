@@ -2,20 +2,23 @@
 #   LodiSave-Setup-<version>.exe       the installer, with the app and the extension inside
 #   LodiSave-<version>-portable.exe    the app alone, nothing to install
 #   LodiSave-extension-<version>.zip   the browser extension, for Load unpacked
+#   LodiSave-<version>-android.apk     the Android app, for phones and tablets (arm64)
 #   SHA256SUMS.txt                     their checksums
 #
 # Steps: build the app, build the uninstaller (the installer crate without a payload), stage
 # everything to install, then build the installer with the staged files inside.
 #
-# Usage: pwsh -File scripts/build-release.ps1 [-SkipApp]
+# Usage: pwsh -File scripts/build-release.ps1 [-SkipApp] [-SkipAndroid]
 
-param([switch]$SkipApp)
+param([switch]$SkipApp, [switch]$SkipAndroid)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $version = (Get-Content -Raw (Join-Path $root "app\tauri.conf.json") | ConvertFrom-Json).version
 $manifest = Get-Content -Raw (Join-Path $root "extension\manifest.json") | ConvertFrom-Json
 if ($manifest.version -ne $version) { throw "extension/manifest.json is $($manifest.version), app is $version" }
+$android = Select-String -Path (Join-Path $root "android\app\build.gradle.kts") -Pattern 'versionName = "([^"]+)"'
+if ($android.Matches[0].Groups[1].Value -ne $version) { throw "android versionName is $($android.Matches[0].Groups[1].Value), app is $version" }
 
 function Invoke-Native([string]$what, [scriptblock]$block) {
   Write-Host "==> $what"
@@ -61,6 +64,12 @@ $files = @(
 )
 foreach ($f in $files) { Copy-Item $f.From (Join-Path $dist $f.To) }
 Compress-Archive -Path (Join-Path $root "extension\*") -DestinationPath (Join-Path $dist "LodiSave-extension-$version.zip")
+
+if (-not $SkipAndroid) {
+  Push-Location (Join-Path $root "android")
+  try { Invoke-Native "Build the Android app" { .\gradlew.bat :app:assembleRelease "-Plodi.abis=arm64-v8a" --console=plain } } finally { Pop-Location }
+  Copy-Item (Join-Path $root "android\app\build\outputs\apk\release\app-release.apk") (Join-Path $dist "LodiSave-$version-android.apk")
+}
 
 $sums = Get-ChildItem $dist -File | Sort-Object Name | ForEach-Object {
   "$((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant())  $($_.Name)"

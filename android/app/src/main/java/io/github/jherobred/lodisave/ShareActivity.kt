@@ -45,6 +45,7 @@ class ShareActivity : ComponentActivity() {
     private val link = mutableStateOf("")
     private var started = false
     private var work: UUID? = null
+    private var watching: kotlinx.coroutines.Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,6 +60,19 @@ class ShareActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
         outState.putBoolean("started", started)
         work?.let { outState.putString("work", it.toString()); outState.putString("link", link.value) }
+    }
+
+    // A share or widget tap while a card is still up starts that card over for the new one.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        watching?.cancel()
+        work = null
+        link.value = ""
+        job.value = Job.Working("reading", -1f)
+        started = false
+        if (!intent.getBooleanExtra(EXTRA_CLIPBOARD, false)) start()
+        else if (hasWindowFocus()) onWindowFocusChanged(true) // no focus change will come to read the clipboard
     }
 
     // The widget's link comes from the clipboard, which Android only shares once this card has focus.
@@ -105,7 +119,7 @@ class ShareActivity : ComponentActivity() {
 
     private fun watch(id: UUID) {
         work = id
-        lifecycleScope.launch {
+        watching = lifecycleScope.launch {
             WorkManager.getInstance(this@ShareActivity).getWorkInfoByIdFlow(id).collect { job.value = it.toJob() }
         }
     }
