@@ -27,7 +27,20 @@ class Copy(val tl: Boolean) {
     val sharing = t("Saving what you shared…", "Sine-save ang shinare mo…")
     val saved = t("Saved!", "Na-save!")
     fun savedMany(n: Int) = t("Saved $n files!", "Na-save ang $n files!")
+    fun savedSome(saved: Int, failed: Int) = t("Saved $saved, $failed didn't work", "Na-save ang $saved, $failed ang hindi gumana")
     val failed = t("That didn't work", "Hindi gumana")
+    val pickTitle = t("Pick what to save", "Piliin ang ise-save")
+    fun pickSub(n: Int) = t("$n photos and videos in this post", "$n na photo at video sa post na ito")
+    val pickAll = t("Select all", "Piliin lahat")
+    val pickNone = t("Clear", "Alisin lahat")
+    fun saveN(n: Int) = t("Save $n", "I-save ang $n")
+    val pick = t("Pick", "Pumili")
+    val tray = t("Saving", "Sine-save")
+    fun alsoSaving(n: Int) = t("$n more saving", "$n pa ang sine-save")
+    val bubble = t("Floating Lodi", "Lumulutang na Lodi")
+    val bubbleHint = t("Over every app: tap Copy link on a post, then tap Lodi.", "Sa ibabaw ng bawat app: i-tap ang Copy link sa post, tapos i-tap si Lodi.")
+    val bubbleNote = t("Lodi is floating. Copy a link, then tap Lodi.", "Lumulutang si Lodi. Mag-copy ng link, tapos i-tap si Lodi.")
+    val bubbleHide = t("Hide Lodi", "Itago si Lodi")
 
     /** Title and explanation for an error code from the save engine, or its own message. */
     fun error(code: String): Pair<String, String> = when (code) {
@@ -48,7 +61,7 @@ class Copy(val tl: Boolean) {
         "noaccess" -> t("That app didn't hand it over", "Hindi ibinigay ng app") to
             t("It shared the file without letting LodiSave open it. Save it in that app, or share its link instead.", "Shinare nito ang file pero hindi pinabuksan sa LodiSave. I-save ito sa app na iyon, o i-share ang link.")
         "nolink" -> t("No link copied", "Walang na-copy na link") to
-            t("Copy a link first, then tap the widget.", "Mag-copy muna ng link, tapos i-tap ang widget.")
+            t("Tap Share, then Copy link on the post, then tap Lodi again.", "I-tap ang Share, tapos Copy link sa post, tapos i-tap ulit si Lodi.")
         else -> failed to code
     }
 
@@ -89,4 +102,13 @@ class Prefs(ctx: Context) {
     var askedNotifications: Boolean
         get() = sp.getBoolean("askedNotifications", false)
         set(v) = sp.edit { putBoolean("askedNotifications", v) }
+    var bubble: Boolean
+        get() = sp.getBoolean("bubble", false)
+        set(v) = sp.edit { putBoolean("bubble", v) }
+    var bubbleY: Int
+        get() = sp.getInt("bubbleY", 600)
+        set(v) = sp.edit { putInt("bubbleY", v) }
+    var bubbleLeft: Boolean
+        get() = sp.getBoolean("bubbleLeft", false)
+        set(v) = sp.edit { putBoolean("bubbleLeft", v) }
 }

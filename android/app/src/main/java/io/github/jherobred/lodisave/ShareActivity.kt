@@ -9,6 +9,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,8 +18,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -26,7 +31,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.work.WorkManager
@@ -37,51 +44,48 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
- * The floating card. Share a link, photo or video to LodiSave, or tap the widget, and Lodi floats
- * up over whatever is on screen while it saves. Leaving early is fine: the save keeps running.
+ * The floating card. Share a link, photo or video to LodiSave, or tap the widget or the floating
+ * Lodi, and Lodi floats up over whatever is on screen while it saves. More shares while the card is
+ * up save side by side, listed under the newest. Leaving early is fine: the saves keep running.
  */
 class ShareActivity : ComponentActivity() {
-    private val job = mutableStateOf<Job>(Job.Working("reading", -1f))
-    private val link = mutableStateOf("")
+    /** Saves this card follows, oldest first. */
+    private val saves = mutableStateListOf<UUID>()
+    /** A shared file being copied, or a share with nothing to save. */
+    private val local = mutableStateOf<Job?>(null)
     private var started = false
-    private var work: UUID? = null
-    private var watching: kotlinx.coroutines.Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { LodiTheme { Floating(job.value, link.value, ::finish) } }
+        savedInstanceState?.getStringArrayList("saves")?.mapTo(saves, UUID::fromString)
         started = savedInstanceState?.getBoolean("started") == true
-        // After a rotation, pick up the save that is already running.
-        savedInstanceState?.getString("work")?.let { link.value = savedInstanceState.getString("link").orEmpty(); watch(UUID.fromString(it)) }
+        setContent { LodiTheme { Floating(saves, local.value, ::pick, ::promote, ::finish) } }
         if (!started && !intent.getBooleanExtra(EXTRA_CLIPBOARD, false)) start()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean("started", started)
-        work?.let { outState.putString("work", it.toString()); outState.putString("link", link.value) }
+        outState.putStringArrayList("saves", ArrayList(saves.map(UUID::toString)))
     }
 
-    // A share or widget tap while a card is still up starts that card over for the new one.
+    // Another share or tap while the card is up joins the saves already on it.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        watching?.cancel()
-        work = null
-        link.value = ""
-        job.value = Job.Working("reading", -1f)
         started = false
         if (!intent.getBooleanExtra(EXTRA_CLIPBOARD, false)) start()
         else if (hasWindowFocus()) onWindowFocusChanged(true) // no focus change will come to read the clipboard
     }
 
-    // The widget's link comes from the clipboard, which Android only shares once this card has focus.
+    // The widget's and the floating Lodi's link comes from the clipboard, which Android only shares
+    // once this card has focus.
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus || started || !intent.getBooleanExtra(EXTRA_CLIPBOARD, false)) return
         started = true
         val url = copiedLink(this)
-        if (url == null) job.value = Job.Failed("nolink") else follow(url)
+        if (url == null) local.value = Job.Failed("nolink") else follow(url)
     }
 
     private fun start() {
@@ -95,15 +99,15 @@ class ShareActivity : ComponentActivity() {
         when {
             streams.isNotEmpty() -> keep(streams)
             LINK.containsMatchIn(text) -> follow(LINK.find(text)!!.value)
-            else -> job.value = Job.Failed("nothing")
+            else -> local.value = Job.Failed("nothing")
         }
     }
 
     /** Copies photos and videos another app shared straight into the gallery. */
     private fun keep(streams: List<Uri>) {
-        job.value = Job.Working("sharing", -1f)
+        local.value = Job.Working("sharing", -1f)
         lifecycleScope.launch {
-            job.value = try {
+            local.value = try {
                 val saved = withContext(Dispatchers.IO) { streams.map { Saver.publish(this@ShareActivity, it) } }
                 Job.Done(saved, saved.map { Saver.nameOf(this@ShareActivity, it) }, saved.map { contentResolver.getType(it).orEmpty() })
             } catch (e: Exception) {
@@ -114,15 +118,21 @@ class ShareActivity : ComponentActivity() {
     }
 
     private fun follow(url: String) {
-        link.value = url
-        watch(SaveWorker.enqueue(this, url))
+        local.value = null
+        saves += SaveWorker.enqueue(this, url)
     }
 
-    private fun watch(id: UUID) {
-        work = id
-        watching = lifecycleScope.launch {
-            WorkManager.getInstance(this@ShareActivity).getWorkInfoByIdFlow(id).collect { job.value = it.toJob() }
-        }
+    /** The user picked from a post with several photos or videos: save those in its place. */
+    private fun pick(id: UUID, url: String, items: String) {
+        val at = saves.indexOf(id)
+        val next = SaveWorker.enqueue(this, url, items)
+        if (at >= 0) saves[at] = next else saves += next
+    }
+
+    /** Brings a save up to the big card, to pick from it there. */
+    private fun promote(id: UUID) {
+        local.value = null
+        if (saves.remove(id)) saves += id
     }
 
     companion object {
@@ -131,15 +141,24 @@ class ShareActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Floating(job: Job, link: String, close: () -> Unit) {
+private fun Floating(saves: List<UUID>, local: Job?, pick: (UUID, String, String) -> Unit, promote: (UUID) -> Unit, close: () -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val t = LocalTokens.current
     val copy = remember { Copy.of(ctx) }
     val motion = remember { Prefs(ctx).motion }
+    val infos by remember { WorkManager.getInstance(ctx).getWorkInfosByTagFlow(SaveWorker.TAG) }.collectAsState(emptyList())
+    val byId = infos.associateBy { it.id }
+    // The newest save is the big one. A shared file or a share with no link stands in when there is no save.
+    val main = local ?: saves.lastOrNull()?.let { byId[it].toJob() } ?: Job.Working("reading", -1f)
+    val mainId = if (local == null) saves.lastOrNull() else null
+    val mainLink = mainId?.let { byId[it]?.link }.orEmpty()
+    val others = saves.filter { it != mainId }.reversed()
+    val busy = (listOf(main) + others.map { byId[it].toJob() }).any { it is Job.Working || it is Job.Choose }
+
     val rise = remember { Animatable(if (motion) 1f else 0f) }
     LaunchedEffect(Unit) { rise.animateTo(0f, floaty()) }
-    // A finished save tucks itself away after a moment.
-    LaunchedEffect(job is Job.Done) { if (job is Job.Done) { delay(4000); close() } }
+    // Finished saves tuck the card away after a moment.
+    LaunchedEffect(busy, main is Job.Done) { if (!busy && main is Job.Done) { delay(4000); close() } }
     Box(
         Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f))
             .clickable(remember { MutableInteractionSource() }, null, onClick = close),
@@ -151,16 +170,30 @@ private fun Floating(job: Job, link: String, close: () -> Unit) {
                     .clickable(remember { MutableInteractionSource() }, null) {}.padding(top = 56.dp),
             ) {
                 Card(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
-                    Header(look(job, copy, link), motion, lodi = false)
-                    if (job is Job.Working) Meter(job.percent)
+                    Header(look(main, copy, mainLink), motion, lodi = false)
+                    when (main) {
+                        is Job.Working -> Meter(main.percent)
+                        is Job.Choose -> Picker(main, copy) { items -> mainId?.let { pick(it, main.url, items) } }
+                        else -> {}
+                    }
                     Actions {
-                        if (job is Job.Done) Pill(copy.open, { openSaved(ctx, job.uris.first(), job.mimes.firstOrNull().orEmpty()); close() }, Modifier.weight(1f))
-                        Pill(copy.close, close, if (job is Job.Done) Modifier else Modifier.weight(1f), primary = false)
+                        if (main is Job.Done && main.uris.isNotEmpty()) Pill(copy.open, { openSaved(ctx, main.uris.first(), main.mimes.firstOrNull().orEmpty()); close() }, Modifier.weight(1f))
+                        Pill(copy.close, close, if (main is Job.Done) Modifier else Modifier.weight(1f), primary = false)
+                    }
+                }
+                if (others.isNotEmpty()) Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val working = others.count { byId[it].toJob() is Job.Working }
+                    if (working > 0) Text(copy.alsoSaving(working), fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = t.muted, modifier = Modifier.padding(start = 4.dp))
+                    for (id in others.take(4)) {
+                        val job = byId[id].toJob()
+                        TrayRow(job, byId[id]?.link.orEmpty(), copy) {
+                            if (job is Job.Choose) Pill(copy.pick, { promote(id) }, primary = false)
+                        }
                     }
                 }
             }
             // Lodi floats over the top edge of the card, the way the design shows him over the share sheet.
-            Lodi(look(job, copy, link).pose, Modifier.size(104.dp).align(Alignment.TopCenter), motion)
+            Lodi(look(main, copy, mainLink).pose, Modifier.size(104.dp).align(Alignment.TopCenter), motion)
         }
     }
 }

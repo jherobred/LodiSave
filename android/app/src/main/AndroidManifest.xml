@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The floating Lodi, over every app, when it's on in Settings. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:icon="@mipmap/ic_launcher"
@@ -24,13 +27,15 @@
             </intent-filter>
         </activity>
 
-        <!-- Share a link, photo or video to LodiSave. The widget opens this too. -->
+        <!-- Share a link, photo or video to LodiSave. The widget and the floating Lodi open this too.
+             One card: a share while it's up reaches it, instead of Android dropping the new share. -->
         <activity
             android:name=".ShareActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:excludeFromRecents="true"
             android:exported="true"
             android:label="@string/share_label"
+            android:launchMode="singleTask"
             android:taskAffinity=""
             android:theme="@style/Theme.LodiSave.Floating">
             <intent-filter>
@@ -59,6 +64,15 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_info" />
         </receiver>
+
+        <service
+            android:name=".BubbleService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="A floating button over other apps that saves the link the user copied" />
+        </service>
 
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

@@ -1,6 +1,22 @@
 package io.github.jherobred.lodisave
 
 import android.content.ClipboardManager
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -83,8 +99,91 @@ fun look(job: Job, copy: Copy, link: String): Look = when (job) {
         job.percent,
         mono = job.phase != "helper",
     )
-    is Job.Done -> Look(Pose.Yay, if (job.names.size > 1) copy.savedMany(job.names.size) else copy.saved, job.names.joinToString(", "), mono = true)
+    is Job.Done -> Look(
+        Pose.Yay,
+        when {
+            job.failed > 0 -> copy.savedSome(job.names.size, job.failed)
+            job.names.size > 1 -> copy.savedMany(job.names.size)
+            else -> copy.saved
+        },
+        job.names.joinToString(", "), mono = true,
+    )
     is Job.Failed -> copy.error(job.code).let { (title, sub) -> Look(Pose.Oops, title, sub) }
+    is Job.Choose -> Look(Pose.Grab, copy.pickTitle, copy.pickSub(job.kinds.size))
+}
+
+/** The photos and videos of a post, each with a round checkbox like the PC picker's. Saves the ticked ones. */
+@Composable
+fun Picker(choose: Job.Choose, copy: Copy, onSave: (String) -> Unit) {
+    val t = LocalTokens.current
+    var picked by remember(choose) { mutableStateOf(choose.kinds.indices.toSet()) }
+    val all = picked.size == choose.kinds.size
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.weight(1f))
+        Text(if (all) copy.pickNone else copy.pickAll, color = t.accent, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+            modifier = Modifier.clip(CircleShape).clickable { picked = if (all) emptySet() else choose.kinds.indices.toSet() }.padding(horizontal = 10.dp, vertical = 6.dp))
+    }
+    LazyVerticalGrid(GridCells.Fixed(3), Modifier.fillMaxWidth().heightIn(max = 340.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(choose.kinds.size) { i ->
+            PickTile(choose.thumbs.getOrElse(i) { "" }, choose.kinds[i] == "video", i in picked) { picked = if (i in picked) picked - i else picked + i }
+        }
+    }
+    Actions { Pill(copy.saveN(picked.size), { onSave(picked.sorted().joinToString(",")) }, Modifier.weight(1f), enabled = picked.isNotEmpty()) }
+}
+
+@Composable
+private fun PickTile(thumb: String, video: Boolean, on: Boolean, toggle: () -> Unit) {
+    val t = LocalTokens.current
+    val image by produceState<ImageBitmap?>(null, thumb) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeFile(thumb, it) }
+                val step = generateSequence(1) { it * 2 }.first { maxOf(bounds.outWidth, bounds.outHeight) / it <= 480 }
+                BitmapFactory.decodeFile(thumb, BitmapFactory.Options().apply { inSampleSize = step })?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+    val scale by animateFloatAsState(if (on) 0.94f else 1f, snap(), label = "pick")
+    val shape = RoundedCornerShape(16.dp)
+    Box(
+        Modifier.aspectRatio(1f).scale(scale).clip(shape).background(t.soft)
+            .then(if (on) Modifier.border(3.dp, t.pick, shape) else Modifier)
+            .clickable(onClick = toggle),
+    ) {
+        image?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        if (video) Canvas(Modifier.align(Alignment.BottomStart).padding(8.dp).size(24.dp)) {
+            drawCircle(Color.Black.copy(alpha = 0.55f))
+            val u = size.width / 24f
+            drawPath(Path().apply { moveTo(9.5f * u, 7f * u); lineTo(17.5f * u, 12f * u); lineTo(9.5f * u, 17f * u); close() }, Color.White)
+        }
+        Canvas(Modifier.align(Alignment.TopEnd).padding(8.dp).size(26.dp)) {
+            val u = size.width / 26f
+            if (on) {
+                drawCircle(t.pick)
+                drawPath(Path().apply { moveTo(7.5f * u, 13.5f * u); lineTo(11.5f * u, 17.5f * u); lineTo(18.5f * u, 9f * u) }, Color.White, style = Stroke(2.6f * u, cap = StrokeCap.Round))
+            } else {
+                drawCircle(Color.Black.copy(alpha = 0.3f))
+                drawCircle(Color.White, style = Stroke(2f * u))
+            }
+        }
+    }
+}
+
+/** One save in a list of saves running side by side: what it's doing, its link and a bar. */
+@Composable
+fun TrayRow(job: Job, link: String, copy: Copy, action: (@Composable RowScope.() -> Unit)? = null) {
+    val t = LocalTokens.current
+    val look = look(job, copy, link)
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(t.surface).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(look.title, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = t.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(short(link), fontFamily = GeistMono, fontSize = 11.sp, color = t.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            action?.invoke(this)
+        }
+        if (job is Job.Working) Meter(job.percent)
+    }
 }
 
 @Composable

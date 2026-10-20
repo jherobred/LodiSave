@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -64,11 +65,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val clip = mutableStateOf<String?>(null)
@@ -78,6 +78,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent { LodiTheme { Home(clip.value, focus.intValue) } }
+    }
+
+    // Back from Android's "display over other apps" page, or any return: float Lodi if it's on.
+    override fun onResume() {
+        super.onResume()
+        BubbleService.sync(this)
     }
 
     // Android shares the clipboard only with the app in focus, so check it each time LodiSave gets focus.
@@ -95,28 +101,32 @@ private fun Home(clip: String?, focus: Int) {
     var lang by remember { mutableStateOf(prefs.lang) }
     var motion by remember { mutableStateOf(prefs.motion) }
     val copy = remember(lang) { Copy(lang == "tl") }
-    var jobId by rememberSaveable { mutableStateOf<String?>(null) }
-    var jobLink by rememberSaveable { mutableStateOf("") }
+    var started by rememberSaveable { mutableStateOf(listOf<String>()) }
+    var hidden by rememberSaveable { mutableStateOf(listOf<String>()) }
     var dismissed by rememberSaveable { mutableStateOf(listOf<String>()) }
     var input by rememberSaveable { mutableStateOf("") }
     var settings by remember { mutableStateOf(false) }
-    val flow = remember(jobId) { jobId?.let { WorkManager.getInstance(ctx).getWorkInfoByIdFlow(UUID.fromString(it)) } ?: flowOf(null) }
-    val info by flow.collectAsState(null)
-    val job = if (jobId == null) Job.Idle else info.toJob()
+    var bubble by remember { mutableStateOf(prefs.bubble) }
+    var picking by remember { mutableStateOf<Pair<String, Job.Choose>?>(null) }
+    val infos by remember { WorkManager.getInstance(ctx).getWorkInfosByTagFlow(SaveWorker.TAG) }.collectAsState(emptyList())
+    val byId = infos.associateBy { it.id.toString() }
+    // Saves started here, newest first, then ones still running from the share card or the floating Lodi.
+    val tray = (started.reversed() + infos.filter { !it.state.isFinished }.map { it.id.toString() }).distinct()
+        .filter { it !in hidden && it in byId }
+    val finished = infos.count { it.state == WorkInfo.State.SUCCEEDED }
     var recent by remember { mutableStateOf(emptyList<Saved>()) }
     // Again on each return, for saves made from the share card or the widget meanwhile.
-    LaunchedEffect(job is Job.Done, focus) { recent = withContext(Dispatchers.IO) { Saver.recent(ctx) } }
+    LaunchedEffect(finished, focus) { recent = withContext(Dispatchers.IO) { Saver.recent(ctx) } }
 
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    fun save(url: String) {
+    fun save(url: String, items: String? = null) {
         if (Build.VERSION.SDK_INT >= 33 && !prefs.askedNotifications) {
             prefs.askedNotifications = true
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        jobLink = url
         dismissed = dismissed + url
         input = ""
-        jobId = SaveWorker.enqueue(ctx, url).toString()
+        started = started + SaveWorker.enqueue(ctx, url, items).toString()
     }
 
     Column(Modifier.fillMaxSize().background(t.ground).safeDrawingPadding().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -126,47 +136,49 @@ private fun Home(clip: String?, focus: Int) {
         }
 
         Card {
-            val showing = clip != null && clip !in dismissed
-            when {
-                job !is Job.Idle -> {
-                    Header(look(job, copy, jobLink), motion)
-                    if (job is Job.Working) Meter(job.percent)
-                    Actions {
-                        when (job) {
-                            is Job.Done -> {
-                                Pill(copy.open, { openSaved(ctx, job.uris.first(), job.mimes.firstOrNull().orEmpty()) }, Modifier.weight(1f))
-                                Pill(copy.close, { jobId = null }, primary = false)
-                            }
-                            is Job.Failed -> {
-                                if (job.code != "login" && job.code != "gone") Pill(copy.again, { save(jobLink) }, Modifier.weight(1f))
-                                Pill(copy.close, { jobId = null }, primary = false)
-                            }
-                            else -> {}
+            val copied = clip
+            if (copied != null && copied !in dismissed) {
+                Header(Look(Pose.Grab, copy.linkCopied, short(copied), mono = true), motion)
+                Actions {
+                    Pill(copy.save, { save(copied) }, Modifier.weight(1f))
+                    Pill(copy.later, { dismissed = dismissed + copied }, primary = false)
+                }
+            } else {
+                Header(Look(if (tray.any { byId[it].toJob() is Job.Working }) Pose.Full else Pose.Idle, copy.idle, copy.idleSub), motion)
+                val link = LINK.find(input)?.value
+                BasicTextField(
+                    input, { input = it },
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(CircleShape).background(t.surface).border(1.dp, t.line, CircleShape).padding(horizontal = 18.dp, vertical = 14.dp),
+                    singleLine = true,
+                    textStyle = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, color = t.ink),
+                    cursorBrush = SolidColor(t.accent),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { link?.let { save(it) } }),
+                    decorationBox = { field -> if (input.isEmpty()) Text(copy.paste, color = t.muted, fontFamily = Geist, fontSize = 14.sp); field() },
+                )
+                Actions { Pill(copy.save, { link?.let { save(it) } }, Modifier.weight(1f), enabled = link != null) }
+            }
+        }
+
+        // Saves side by side, each with its own bar, like the PC picker's saving tray.
+        if (tray.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(copy.tray, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = t.muted)
+            for (id in tray.take(4)) {
+                val info = byId.getValue(id)
+                val job = info.toJob()
+                TrayRow(job, info.link, copy) {
+                    when (job) {
+                        is Job.Choose -> Pill(copy.pick, { picking = id to job })
+                        is Job.Done -> {
+                            if (job.uris.isNotEmpty()) Pill(copy.open, { openSaved(ctx, job.uris.first(), job.mimes.firstOrNull().orEmpty()) })
+                            Pill("\u2715", { hidden = hidden + id }, primary = false)
                         }
+                        is Job.Failed -> {
+                            if (job.code != "login" && job.code != "gone") Pill(copy.again, { hidden = hidden + id; save(info.link) }, primary = false)
+                            Pill("\u2715", { hidden = hidden + id }, primary = false)
+                        }
+                        else -> {}
                     }
-                }
-                showing -> {
-                    val copied = clip
-                    Header(Look(Pose.Grab, copy.linkCopied, short(copied), mono = true), motion)
-                    Actions {
-                        Pill(copy.save, { save(copied) }, Modifier.weight(1f))
-                        Pill(copy.later, { dismissed = dismissed + copied }, primary = false)
-                    }
-                }
-                else -> {
-                    Header(Look(Pose.Idle, copy.idle, copy.idleSub), motion)
-                    val link = LINK.find(input)?.value
-                    BasicTextField(
-                        input, { input = it },
-                        Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(CircleShape).background(t.surface).border(1.dp, t.line, CircleShape).padding(horizontal = 18.dp, vertical = 14.dp),
-                        singleLine = true,
-                        textStyle = TextStyle(fontFamily = GeistMono, fontSize = 13.sp, color = t.ink),
-                        cursorBrush = SolidColor(t.accent),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(onGo = { link?.let(::save) }),
-                        decorationBox = { field -> if (input.isEmpty()) Text(copy.paste, color = t.muted, fontFamily = Geist, fontSize = 14.sp); field() },
-                    )
-                    Actions { Pill(copy.save, { link?.let(::save) }, Modifier.weight(1f), enabled = link != null) }
                 }
             }
         }
@@ -183,6 +195,15 @@ private fun Home(clip: String?, focus: Int) {
         Spacer(Modifier.height(4.dp))
     }
 
+    picking?.let { (id, choose) ->
+        ModalBottomSheet(onDismissRequest = { picking = null }, containerColor = t.surface) {
+            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Header(look(choose, copy, choose.url), motion)
+                Picker(choose, copy) { items -> hidden = hidden + id; picking = null; save(choose.url, items) }
+            }
+        }
+    }
+
     if (settings) {
         ModalBottomSheet(onDismissRequest = { settings = false }, containerColor = t.surface) {
             Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -193,6 +214,16 @@ private fun Home(clip: String?, focus: Int) {
                 SettingRow(copy.motion) {
                     Segmented(listOf("on" to copy.on, "off" to copy.off), if (motion) "on" else "off") { motion = it == "on"; prefs.motion = motion }
                 }
+                SettingRow(copy.bubble) {
+                    Segmented(listOf("on" to copy.on, "off" to copy.off), if (bubble) "on" else "off") {
+                        bubble = it == "on"
+                        prefs.bubble = bubble
+                        // Floating over other apps needs Android's permission first. LodiSave starts Lodi on return.
+                        if (bubble && !Settings.canDrawOverlays(ctx)) ctx.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${ctx.packageName}".toUri()))
+                        else BubbleService.sync(ctx)
+                    }
+                }
+                Text(copy.bubbleHint, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
                 Text("LodiSave ${ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName} · github.com/jherobred/LodiSave", fontFamily = GeistMono, fontSize = 12.sp, color = t.muted,
                     modifier = Modifier.clickable { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/jherobred/LodiSave".toUri())) } })
             }
