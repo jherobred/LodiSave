@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -138,9 +139,13 @@ PAGE = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/a
 FILE_TYPES = {**IMAGE_TYPES, 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3'}
 # Share links that redirect to the post, from the apps' Share buttons.
 SHORT = re.compile(r'https?://(?:(?:www|m|web)\.facebook\.com/share/|fb\.watch/|pin\.it/|v[mt]\.tiktok\.com/|t\.co/|'
-                   r'(?:www\.)?instagram\.com/share/|(?:www\.)?threads\.net/)')
+                   r'(?:www\.)?instagram\.com/share/|(?:www\.)?threads\.net/|(?:www\.)?reddit\.com/r/\w+/s/)')
 META_POST = re.compile(r'https?://(?:www\.)?(?:threads\.(?:com|net)/@[\w.]+/post|instagram\.com/(?:[\w.]+/)?(?:p|reels?|tv))/([\w-]+)')
 X_POST = re.compile(r'https?://(?:(?:www|mobile)\.)?(?:x|twitter)\.com/\w+/status(?:es)?/(\d+)')
+REDDIT_POST = re.compile(r'https?://(?:[\w-]+\.)?reddit\.com/(?:r/(\w+)/)?(?:comments|gallery)/(\w+)|https?://redd\.it/(\w+)')
+REDDIT_VIDEO = re.compile(r'https?://v\.redd\.it/(\w+)')
+# Reddit's own preview of a post image, named after the original: preview.redd.it/<title>-v0-<id>.jpeg?width=640
+REDDIT_PREVIEW = re.compile(r'https://preview\.redd\.it/(?:[\w-]*-v0-)?(\w+)\.(jpe?g|png|gif|webp)')
 
 
 def http_code(e):
@@ -261,6 +266,48 @@ def x_items(tid):
             if mp4:
                 out.append({'kind': 'video', 'src': max(mp4, key=lambda v: v.get('bitrate') or 0)['url'], 'thumb': still})
     return named(out, f"{(data.get('user') or {}).get('screen_name') or ''} {tid}") or None
+
+
+def reddit_items(sub, post, hops=0):
+    """Every photo and video of a Reddit post, from the embed page Reddit makes for other sites
+    (reddit.com itself sends scripts a bot check). A link with no subreddit finds it in the post's
+    feed. None when the post can't be read this way."""
+    try:
+        if not sub:
+            for wait in (True, False):
+                try:
+                    feed, _ = get(f'https://www.reddit.com/comments/{post}/.rss', limit=2_000_000)
+                    break
+                except urllib.error.HTTPError as e:
+                    # Without a login Reddit answers about one feed a second, and says when to come back.
+                    if e.code != 429 or not wait:
+                        raise
+                    time.sleep(min(5, float(e.headers.get('x-ratelimit-reset') or 2)) + 0.5)
+            sub = (re.search(rf'reddit\.com/r/(\w+)/comments/{post}'.encode(), feed) or [b'', b''])[1].decode()
+        page, _ = page_of(f'https://embed.reddit.com/r/{sub}/comments/{post}/')
+    except Exception:
+        return None
+    out = []
+    # A video: Reddit's own MP4s, picture and sound in one file, at several sizes.
+    packaged = re.search(r'packaged-media-json="([^"]+)"', page)
+    if packaged:
+        try:
+            sizes = json.loads(html.unescape(packaged.group(1)))['playbackMp4s']['permutations']
+            best = max(sizes, key=lambda p: (p['source'].get('dimensions') or {}).get('height') or 0)['source']['url']
+            poster = re.search(r'<img alt="media poster"[^>]*src="([^"]+)"', page)
+            out.append({'kind': 'video', 'src': html.unescape(best), 'thumb': poster and html.unescape(poster.group(1))})
+        except (ValueError, KeyError, TypeError):
+            pass
+    # Photos, a gallery's in order: the originals on i.redd.it, which the previews are named after.
+    if not out:
+        gallery = re.search(r'<gallery-carousel.*?</gallery-carousel>', page, re.S)
+        for m in dict.fromkeys(REDDIT_PREVIEW.findall(gallery.group(0) if gallery else page)):
+            out.append({'kind': 'image', 'src': f'https://i.redd.it/{m[0]}.{m[1]}', 'thumb': f'https://i.redd.it/{m[0]}.{m[1]}'})
+    if not out:
+        # A crosspost shows only a link to the post it shares.
+        other = re.search(rf'reddit\.com/(?:r/(\w+)/comments|gallery)/((?!{post}\b)\w+)', page)
+        return reddit_items(other.group(1), other.group(2), hops + 1) if other and not hops else None
+    return named(out, f'{sub} {post}')
 
 
 def named(items, stem):
@@ -407,8 +454,16 @@ def items_of(yt_dlp, url, base):
     elif m := X_POST.match(url):
         if items := x_items(m.group(1)):
             return items
+    elif m := REDDIT_POST.match(url):
+        if items := reddit_items(m.group(1), m.group(2) or m.group(3)):
+            return items
+    elif m := REDDIT_VIDEO.match(url):
+        # A bare video link: its playlist is public, where the post page sends a bot check.
+        url = f'https://v.redd.it/{m.group(1)}/DASHPlaylist.mpd'
     try:
         info = extract(yt_dlp, url, base)
+        if m and m.re is REDDIT_VIDEO:
+            info.update(title='reddit', id=m.group(1))
         entries = [e for e in info.get('entries') or []] if info.get('_type') == 'playlist' else [info]
         items = named([{'kind': 'video', 'info': e, 'thumb': e.get('thumbnail')} for e in entries if e],
                       f"{info.get('title') or ''} [{info.get('id') or ''}]")
@@ -422,16 +477,19 @@ def items_of(yt_dlp, url, base):
         return page_items(url)
 
 
+RECENT = {}
+
+
 def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None, pick_items=None, thumbs=None):
     """Saves a link. A post with several photos or videos answers {"choose": [{"kind", "thumb"}]}
-    first, with a preview of each written to `thumbs`; save it again with pick_items ("0,2") to save
-    those. Otherwise {"saves": [{"index", "files", "join"?}], "failed": n} or {"error": code}."""
+    first, with a preview of each written to `thumbs`; save it again with pick_items ("0,2", or "all")
+    to save those. Otherwise {"saves": [{"index", "files", "join"?}], "failed": n} or {"error": code}."""
     try:
         url = unwrap(url.strip())
         if not re.match(r'https?://\S+$', url):
             raise Failure('nothing')
         progress.report('reading', -1.0)
-        url = resolve(url)
+        asked = url
         if ytdlp_zip not in sys.path:
             sys.path.insert(0, ytdlp_zip)
         import yt_dlp
@@ -442,12 +500,25 @@ def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None, pick_items=None,
             # cache keeps YouTube's player script between saves.
             base.update({'js_runtimes': {'quickjs': {'path': qjs}},
                          'cachedir': os.path.join(os.path.dirname(ytdlp_zip), 'yt-dlp-cache')})
-        items = items_of(yt_dlp, url, base)
+        # Picking from a post reads it again, so a post read in the last ten minutes isn't fetched twice
+        # (Reddit refuses a quick second visit).
+        seen = RECENT.get(asked)
+        if seen and time.time() - seen[0] < 600:
+            url, items = seen[1], seen[2]
+        else:
+            url = resolve(asked)
+            items = items_of(yt_dlp, url, base)
+            RECENT[asked] = (time.time(), url, items)
         if pick_items is None and len(items) > 1:
             folder = thumbs or out_dir
             os.makedirs(folder, exist_ok=True)
             return json.dumps({'choose': [{'kind': it['kind'], 'thumb': thumbnail(it, url, folder, i)} for i, it in enumerate(items)]})
-        chosen = [0] if pick_items is None else [int(i) for i in str(pick_items).split(',') if i.strip().isdigit() and int(i) < len(items)]
+        if pick_items is None:
+            chosen = [0]
+        elif pick_items == 'all':
+            chosen = list(range(len(items)))
+        else:
+            chosen = [int(i) for i in str(pick_items).split(',') if i.strip().isdigit() and int(i) < len(items)]
         saves, failure = [], None
         for n, i in enumerate(chosen):
             lo, span = 100 * n / len(chosen), 100 / len(chosen)
@@ -511,6 +582,11 @@ if __name__ == '__main__':
     assert META_POST.match('https://www.instagram.com/reel/C1a2b3/?igsh=x').group(1) == 'C1a2b3'
     assert X_POST.match('https://x.com/elonmusk/status/1585341984679469056?s=46').group(1) == '1585341984679469056'
     assert x_token('1585341984679469056').startswith('3uchycv2wq')
+    assert REDDIT_POST.match('https://www.reddit.com/r/aww/comments/90bu6w/heat_index/').groups() == ('aww', '90bu6w', None)
+    assert REDDIT_POST.match('https://redd.it/1xb6c3p').groups() == (None, None, '1xb6c3p')
+    assert REDDIT_POST.match('https://www.reddit.com/gallery/1xb6c3p').groups() == (None, '1xb6c3p', None)
+    assert REDDIT_PREVIEW.findall('src="https://preview.redd.it/tiny-room-v0-fatco1py8pwh1.jpeg?width=640"') == [('fatco1py8pwh1', 'jpeg')]
+    assert REDDIT_PREVIEW.findall('src="https://preview.redd.it/abc123.png?width=640"') == [('abc123', 'png')]
     assert SHORT.match('https://www.facebook.com/share/r/1AbC/') and SHORT.match('https://vt.tiktok.com/ZS1/') and not SHORT.match('https://www.tiktok.com/@a/video/1')
     assert unwrap('https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.tiktok.com%2F%40a%2Fvideo%2F1%3Fx%3D1&h=AT0') == 'https://www.tiktok.com/@a/video/1?x=1'
     assert unwrap('https://www.google.com/url?q=https://x.com/a/status/1&sa=D') == 'https://x.com/a/status/1'
