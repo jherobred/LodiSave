@@ -238,6 +238,12 @@ private fun Home(clip: String?, focus: Int) {
                 Text("${copy.pickerHint} ${copy.pickerRestricted}", fontFamily = Geist, fontSize = 13.sp, color = t.muted)
                 Text(copy.appInfo, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = t.accent,
                     modifier = Modifier.clip(CircleShape).clickable { ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${ctx.packageName}".toUri())) }.padding(vertical = 4.dp))
+                // Xiaomi phones keep LodiSave's card from opening over other apps until this is allowed.
+                if (Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true)) Text(copy.xiaomi, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = t.accent,
+                    modifier = Modifier.clip(CircleShape).clickable {
+                        runCatching { ctx.startActivity(Intent("miui.intent.action.APP_PERM_EDITOR").putExtra("extra_pkgname", ctx.packageName)) }
+                            .onFailure { ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${ctx.packageName}".toUri())) }
+                    }.padding(vertical = 4.dp))
                 Text("LodiSave ${ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName} · github.com/jherobred/LodiSave", fontFamily = GeistMono, fontSize = 12.sp, color = t.muted,
                     modifier = Modifier.clickable { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/jherobred/LodiSave".toUri())) } })
             }

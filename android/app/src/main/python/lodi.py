@@ -94,11 +94,14 @@ def pick(info):
 
 
 def upgrade(url):
-    """Full-size originals for X and Pinterest, as in extension/rules.js."""
+    """Full-size originals for X and Pinterest, as in extension/rules.js, and Reddit's previews."""
     m = re.match(r'https://pbs\.twimg\.com/(media/[^/?#:.]+)(?:\.(\w+))?(?::\w+)?(?:\?([^#]*))?', url)
     if m:
         query = dict(p.split('=', 1) for p in (m.group(3) or '').split('&') if '=' in p)
         return f"https://pbs.twimg.com/{m.group(1)}?format={query.get('format') or m.group(2) or 'jpg'}&name=orig"
+    m = REDDIT_PREVIEW.match(url)
+    if m:
+        return f'https://i.redd.it/{m.group(1)}.{m.group(2)}'
     m = re.match(r'https://i\.pinimg\.com/(\d+x\d*(?:_RS)?)/(.+)$', url)
     return f'https://i.pinimg.com/originals/{m.group(2)}' if m else None
 
@@ -538,6 +541,20 @@ def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None, pick_items=None,
         return json.dumps({'error': f'{type(e).__name__}: {e}'[:300]})
 
 
+def save_file(url, out_dir, progress, referer=None):
+    """Saves a photo or video file itself, as the picker finds one on a web page, full size where
+    the site keeps one. Answers as save() does."""
+    try:
+        progress.report('saving', -1.0)
+        stem = os.path.splitext(os.path.basename(urllib.parse.urlparse(url).path))[0]
+        item = named([{'src': upgrade(url) or url, 'alts': [url]}], stem or 'image')[0]
+        return json.dumps({'saves': [{'index': 0, 'files': [fetch(item, referer, out_dir, progress, 0, 100)]}], 'failed': 0})
+    except Failure as f:
+        return json.dumps({'error': str(f)})
+    except Exception as e:
+        return json.dumps({'error': f'{type(e).__name__}: {e}'[:300]})
+
+
 if __name__ == '__main__':
     info = {'formats': [
         {'format_id': '18', 'ext': 'mp4', 'vcodec': 'avc1', 'acodec': 'mp4a', 'height': 360, 'protocol': 'https'},
@@ -555,6 +572,7 @@ if __name__ == '__main__':
     assert upgrade('https://pbs.twimg.com/media/Gx1?format=png&name=small') == 'https://pbs.twimg.com/media/Gx1?format=png&name=orig'
     assert upgrade('https://pbs.twimg.com/media/Gx1.jpg:large') == 'https://pbs.twimg.com/media/Gx1?format=jpg&name=orig'
     assert upgrade('https://example.com/236x/a.jpg') is None
+    assert upgrade('https://preview.redd.it/tiny-room-v0-fatco1py8pwh1.jpeg?width=640&s=1') == 'https://i.redd.it/fatco1py8pwh1.jpeg'
     assert SITE_ART.search('t_logo_2x.png') and SITE_ART.search('og-default.jpg') and not SITE_ART.search('5645318632_09ff5eef3b_b.jpg')
     assert clean_name('a/b: "c"?. ') == 'a_b_ _c__'
     assert code_for('ERROR: [Instagram] x: Requested content is not available, rate-limit reached or login required') == 'login'

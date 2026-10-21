@@ -44,7 +44,8 @@ class Copy(val tl: Boolean) {
     val pickHint = t("Tap ○ on photos and videos", "I-tap ang ○ sa mga photo at video")
     fun pickedN(n: Int) = t("$n picked", "$n ang napili")
     val pickFetching = t("Getting the post's link…", "Kinukuha ang link ng post…")
-    val pickNoLink = t("Couldn't find Share then Copy link on that post", "Walang Share at Copy link sa post na iyon")
+    val pickNoLink = t("Couldn't get a link or a picture of that one", "Walang makuhang link o larawan doon")
+    fun savingN(n: Int) = t("Saving $n to your gallery…", "Sine-save ang $n sa gallery…")
     val pickCopied = t("Copied link", "Na-copy na link")
     val picker = t("Pick in other apps", "Pumili sa ibang apps")
     val pickerHint = t(
@@ -56,6 +57,7 @@ class Copy(val tl: Boolean) {
         "Kung sabihin ng Android na restricted ang setting, buksan ang App info, i-tap ang ⋮, tapos Allow restricted settings.",
     )
     val appInfo = t("App info", "App info")
+    val xiaomi = t("Xiaomi: allow pop-up windows while running in the background", "Xiaomi: i-allow ang pop-up windows while running in the background")
     val openAccessibility = t("Open Accessibility", "Buksan ang Accessibility")
 
     /** Title and explanation for an error code from the save engine, or its own message. */

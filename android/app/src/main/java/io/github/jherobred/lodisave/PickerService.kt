@@ -1,10 +1,12 @@
 package io.github.jherobred.lodisave
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -14,6 +16,7 @@ import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.provider.Settings
+import android.view.Display
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -22,6 +25,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.compose.ui.graphics.toArgb
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -30,15 +35,26 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+import kotlin.coroutines.resume
 
 /**
  * Picking photos and videos inside other apps, as the PC picker does on web pages. Tap the floating
- * Lodi and a round checkbox shows on each photo and video on screen. Ticking one gets its post's
- * link the way a person would: LodiSave taps the post's Share button, then Copy link. Save saves the
- * original files from those links, the photo you ticked in a carousel, not the whole post.
+ * Lodi and a round checkbox shows on each photo and video on screen. Ticking one finds the best copy
+ * it can: on a web page the photo's own file, which browsers name; in an app its post's link, got the
+ * way a person would (LodiSave taps the post's Share button, then Copy link), so Save saves the
+ * original files, the photo you ticked in a carousel, not the whole post. Each tick also keeps a shot
+ * of the photo as it shows on screen, saved instead when there's no link or the link gives nothing,
+ * so a tick saves something in every app.
  *
  * An accessibility service, since that's the only way Android lets one app see where another app's
  * photos are and press its buttons. It looks at the screen only while picking.
@@ -56,12 +72,13 @@ class PickerService : AccessibilityService() {
     private var status: TextView? = null
     private var saveButton: TextView? = null
     private val circles = mutableListOf<Circle>()
-    /** Ticked photos and videos, by where they sit in the app's lists, with the post link and carousel spot. */
+    /** Ticked photos and videos, by where they sit in the app's lists, with what saves them. */
     private val picks = LinkedHashMap<String, Pick>()
-    private var clip: CompletableDeferred<String?>? = null
     private val rescan = Runnable { render() }
 
-    private class Pick(var state: State, var link: String? = null, var index: Int? = null)
+    /** A tick: its post's link and carousel spot, or a web photo's own file (`file`) and the `page`
+     *  it's on, and the shot of it on screen. */
+    private class Pick(var state: State, val link: String? = null, val index: Int? = null, val file: Boolean = false, val page: String? = null, val shot: File? = null)
     private enum class State { Fetching, Ready, Failed }
     private class Media(val key: String, val bounds: Rect, val node: AccessibilityNodeInfo)
 
@@ -98,6 +115,8 @@ class PickerService : AccessibilityService() {
 
     private fun start() {
         picking = true
+        // Shots of ticks that were never saved.
+        File(cacheDir, "picks").listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 3_600_000 }?.forEach { it.deleteRecursively() }
         showBar()
         render()
     }
@@ -121,20 +140,31 @@ class PickerService : AccessibilityService() {
         val root = appRoot() ?: return emptyList()
         val width = resources.displayMetrics.widthPixels
         val found = mutableListOf<Media>()
-        fun walk(n: AccessibilityNodeInfo, depth: Int) {
-            if (depth > 80) return
+        // Inside first, answering whether the node or anything in it shows text. A picture that an app
+        // draws with no node of its own, as Reddit, Pinterest and YouTube do, shows only as the frame
+        // around it with no text inside, which counts too.
+        fun walk(n: AccessibilityNodeInfo, depth: Int): Boolean {
+            if (depth > 80) return true
+            // Off screen, like most of a long web page, and what's inside it: skipped, which keeps big pages quick.
+            if (!n.isVisibleToUser) return false
+            var words = !n.text.isNullOrBlank()
+            for (i in 0 until n.childCount) n.getChild(i)?.let { if (walk(it, depth + 1)) words = true }
             val r = Rect().also(n::getBoundsInScreen)
             // Photos and videos, not avatars, icons or emoji: at least a third of the screen wide.
-            if (n.isVisibleToUser && r.width() >= width * 0.3 && r.height() >= width * 0.2 && isMedia(n)) found += Media(keyOf(n), r, n)
-            for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, depth + 1) }
+            if (r.width() >= width * 0.3 && r.height() >= width * 0.2 &&
+                (isMedia(n) || !words && depth > 0 && !n.isScrollable && !n.isEditable)) found += Media(keyOf(n), r, n)
+            return words
         }
         walk(root, 0)
-        // One circle per spot: a video's frame and the picture inside it count once.
-        return found.filter { a -> found.none { b -> b !== a && b.bounds.contains(a.bounds) && (b.bounds != a.bounds || found.indexOf(b) < found.indexOf(a)) } }
+        // One circle per spot, on the innermost: a video's frame and the picture inside it count
+        // once, and a row of photos with no words gets one each.
+        return found.filter { a -> found.none { b -> b !== a && a.bounds.contains(b.bounds) && (a.bounds != b.bounds || found.indexOf(b) < found.indexOf(a)) } }
     }
 
     private fun isMedia(n: AccessibilityNodeInfo) =
-        MEDIA_CLASS.containsMatchIn(n.className ?: "") || MEDIA_WORDS.containsMatchIn(n.contentDescription ?: "")
+        MEDIA_CLASS.containsMatchIn(n.className ?: "") || MEDIA_WORDS.containsMatchIn(n.contentDescription ?: "") ||
+            MEDIA_ROLE.matches(n.extras.getCharSequence(CHROME_ROLE) ?: "") ||
+            n.text.isNullOrEmpty() && MEDIA_ID.containsMatchIn(n.viewIdResourceName?.substringAfter(":id/") ?: "")
 
     /** Where a photo sits in the app's lists, which stays the same as the feed scrolls. */
     private fun keyOf(n: AccessibilityNodeInfo): String {
@@ -143,14 +173,15 @@ class PickerService : AccessibilityService() {
         return if (spots.isNotEmpty()) "${n.packageName}|${spots.joinToString("/")}|${n.contentDescription ?: ""}" else "${n.packageName}|${n.contentDescription ?: ""}|${r.top / 40}"
     }
 
-    /** A photo's place in its post's carousel, from the carousel list or a "2/5" counter, or null. */
+    /** A photo's place in its post's carousel, from the carousel list or a "2 of 5" counter on it or
+     *  just around it (Instagram's is on the frame), or null. */
     private fun carouselIndex(n: AccessibilityNodeInfo): Int? {
         for (p in generateSequence(n) { it.parent }.take(10)) {
             val item = p.collectionItemInfo ?: continue
             val list = p.parent?.collectionInfo ?: continue
             if (list.rowCount <= 1 && list.columnCount != 1) return item.columnIndex
         }
-        COUNTER.find(n.contentDescription ?: "")?.let { return it.groupValues[1].toInt() - 1 }
+        for (p in generateSequence(n) { it.parent }.take(3)) COUNTER.find(p.contentDescription ?: "")?.let { return it.groupValues[1].toInt() - 1 }
         return null
     }
 
@@ -179,7 +210,7 @@ class PickerService : AccessibilityService() {
     @SuppressLint("InternalInsetResource", "DiscouragedApi")
     private fun statusBarHeight(): Int = resources.getIdentifier("status_bar_height", "dimen", "android").takeIf { it > 0 }?.let(resources::getDimensionPixelSize) ?: (24 * dp).toInt()
 
-    // ----- Ticking: Share, then Copy link -----
+    // ----- Ticking: a shot, then the photo's file or its post's link -----
 
     private fun tap(m: Media) {
         val pick = picks[m.key]
@@ -192,52 +223,103 @@ class PickerService : AccessibilityService() {
         picks[m.key] = Pick(State.Fetching)
         render()
         scope.launch {
-            val got = one.withLock { linkOf(m) }
+            val got = one.withLock { grab(m) }
             val p = picks[m.key] ?: return@launch
-            if (got == null) {
+            if (got.link == null && got.shot == null) {
                 p.state = State.Failed
                 render()
                 status?.text = copy.pickNoLink
                 delay(1600)
                 picks.remove(m.key)
             } else {
-                p.state = State.Ready
-                p.link = got.first
-                p.index = got.second
+                picks[m.key] = got
             }
             render()
         }
     }
 
-    /** The post's link and the photo's place in it, read by pressing the post's Share, then Copy link. */
-    private suspend fun linkOf(m: Media): Pair<String, Int?>? {
+    /** What saving a ticked photo takes: its shot first, while it's on screen, then its best link. */
+    private suspend fun grab(m: Media): Pick {
         busy++
         try {
-            val index = carouselIndex(m.node)
-            val share = shareButton(m) ?: return null.also { log("no Share near ${m.key}") }
-            if (!click(share)) return null.also { log("Share didn't take the click") }
-            // A share sheet can take seconds the first time, while the app loads it and your contacts.
-            val copyLink = waitFor(6000) { COPY_LINK.containsMatchIn(label(it).trim()) } ?: run {
-                log("no Copy link after Share")
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                return null
-            }
-            clip = CompletableDeferred()
-            click(copyLink)
-            delay(350)
-            // Android shares the clipboard only with the app in front, so a see-through screen reads it.
-            startActivity(Intent(this, ClipActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
-            val link = withTimeoutOrNull(4000) { clip?.await() }
-            log("copied ${link ?: "nothing"} at carousel spot $index")
-            delay(250)
-            // Some apps leave their share sheet open after copying.
-            if (find { COPY_LINK.containsMatchIn(label(it).trim()) } != null) performGlobalAction(GLOBAL_ACTION_BACK)
-            return link?.let { it to index }
+            val shot = if (Build.VERSION.SDK_INT >= 30) runCatching { shoot(m) }.onFailure { log("no shot: $it") }.getOrNull() else null
+            webLink(m.node)?.let { (url, file) -> return Pick(State.Ready, url, file = file, page = if (file) pageOf() else null, shot = shot) }
+            val (link, index) = linkOf(m) ?: (null to null)
+            return Pick(State.Ready, link, index, shot = shot)
         } finally {
-            clip = null
             busy--
         }
     }
+
+    /** The photo as it shows on screen, as a JPEG, or null for a secure screen. Android 11 and up. */
+    @RequiresApi(30)
+    private suspend fun shoot(m: Media): File? {
+        val result = aside {
+            suspendCancellableCoroutine<ScreenshotResult?> { k ->
+                takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+                    override fun onSuccess(s: ScreenshotResult) = k.resume(s)
+                    override fun onFailure(code: Int) = k.resume(null).also { log("no shot: error $code") }
+                })
+            }
+        } ?: return null
+        val app = m.node.window?.title?.toString()?.replace(BAD_NAME, "")?.trim()?.take(40)?.ifEmpty { null } ?: "LodiSave"
+        val name = "$app ${STAMP.format(Date())}.jpg"
+        return withContext(Dispatchers.Default) {
+            val buffer = result.hardwareBuffer
+            val full = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
+            buffer.close()
+            val r = Rect(m.bounds)
+            if (full == null || !r.intersect(0, 0, full.width, full.height)) return@withContext null
+            val crop = Bitmap.createBitmap(full, r.left, r.top, r.width(), r.height())
+            // A secure screen, like a bank's or a paid stream's, comes out black.
+            if (black(crop)) return@withContext null.also { log("no shot: black, a secure screen") }
+            File(cacheDir, "picks/${UUID.randomUUID()}").apply { mkdirs() }.resolve(name).also { f -> f.outputStream().use { crop.compress(Bitmap.CompressFormat.JPEG, 92, it) } }
+        }
+    }
+
+    /** What a web page says a photo is: its own file (true), or the page its link goes to (false).
+     *  Chrome, other Chromium browsers and apps' web views tell. */
+    private fun webLink(n: AccessibilityNodeInfo): Pair<String, Boolean>? {
+        for (p in generateSequence(n) { it.parent }.take(4)) {
+            val url = p.extras.getCharSequence(TARGET_URL)?.toString()?.takeIf { it.startsWith("http") } ?: continue
+            return url to (p === n && MEDIA_ROLE.matches(n.extras.getCharSequence(CHROME_ROLE) ?: ""))
+        }
+        return null
+    }
+
+    /** The address in a browser's bar, which some sites want to see before they hand over a photo. */
+    private fun pageOf(): String? {
+        val root = appRoot() ?: return null
+        val bar = URL_BARS.firstNotNullOfOrNull { root.findAccessibilityNodeInfosByViewId("${root.packageName}:id/$it").firstOrNull() }
+        val text = bar?.text?.toString()?.trim()?.takeIf { it.isNotEmpty() && ' ' !in it } ?: return null
+        return if (text.startsWith("http")) text else "https://$text"
+    }
+
+    /** The post's link and the photo's place in it, read by pressing the post's Share, then Copy link. */
+    private suspend fun linkOf(m: Media): Pair<String, Int?>? {
+        val index = carouselIndex(m.node)
+        val share = shareButton(m) ?: return null.also { log("no Share near ${m.key}") }
+        val before = appWindows()
+        if (!press(share)) return null.also { log("Share didn't take the press") }
+        // A share sheet can take seconds the first time, while the app loads it and your contacts.
+        val copyLink = waitFor(6000) { COPY_LINK.containsMatchIn(label(it).trim()) } ?: run {
+            log("no Copy link after Share")
+            // Close what Share opened, but don't leave the app's screen when it opened nothing.
+            if (appWindows() != before) performGlobalAction(GLOBAL_ACTION_BACK)
+            return null
+        }
+        val copied = System.currentTimeMillis()
+        press(copyLink)
+        delay(350)
+        val link = readClip(copied)
+        log("copied ${link ?: "nothing"} at carousel spot $index")
+        delay(250)
+        // Some apps leave their share sheet open after copying.
+        if (find { COPY_LINK.containsMatchIn(label(it).trim()) } != null) performGlobalAction(GLOBAL_ACTION_BACK)
+        return link?.let { it to index }
+    }
+
+    private fun appWindows() = windows.filter { it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }.map { it.id }.toSet()
 
     /** The post's Share button: the one nearest below the photo, in the smallest part of the screen around it that has one. */
     private fun shareButton(m: Media): AccessibilityNodeInfo? {
@@ -261,19 +343,54 @@ class PickerService : AccessibilityService() {
 
     private fun log(message: String) = android.util.Log.i("LodiPicker", message)
 
-    private fun click(n: AccessibilityNodeInfo): Boolean =
-        generateSequence(n) { it.parent }.take(6).firstOrNull { it.isClickable }?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+    /** Presses a button: an accessibility click where it takes one, else a tap where it shows, as a
+     *  finger would. Instagram's and Reddit's Share buttons say they can't be clicked, and take taps. */
+    private suspend fun press(n: AccessibilityNodeInfo): Boolean {
+        if (n.isClickable && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        val r = Rect().also(n::getBoundsInScreen)
+        if (r.isEmpty) return false
+        val tap = GestureDescription.StrokeDescription(Path().apply { moveTo(r.exactCenterX(), r.exactCenterY()) }, 0, 60)
+        return aside {
+            suspendCancellableCoroutine<Boolean> { k ->
+                val sent = dispatchGesture(GestureDescription.Builder().addStroke(tap).build(), object : GestureResultCallback() {
+                    override fun onCompleted(g: GestureDescription) = k.resume(true)
+                    override fun onCancelled(g: GestureDescription) = k.resume(false)
+                }, null)
+                if (!sent) k.resume(false)
+            }
+        }
+    }
 
+    /** Runs `block` with LodiSave's circles, bar and floating Lodi hidden, so they stay out of a shot
+     *  and a tap goes through to the app. */
+    private suspend fun <T> aside(block: suspend () -> T): T {
+        val ours = circles.map { it.view } + listOfNotNull(bar, BubbleService.shown)
+        ours.forEach { it.visibility = View.INVISIBLE }
+        try {
+            delay(120) // a frame drawn without them
+            return block()
+        } finally {
+            ours.forEach { it.visibility = View.VISIBLE }
+        }
+    }
+
+    /** The first match on screen, a button over a mere label when both say the same, as Instagram's
+     *  Copy link icon and the words under it do. */
     private fun find(match: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        var label: AccessibilityNodeInfo? = null
         for (root in windows.filter { it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }.mapNotNull { it.root }) {
             val stack = ArrayDeque(listOf(root))
             while (stack.isNotEmpty()) {
                 val n = stack.removeLast()
-                if (n.isVisibleToUser && match(n)) return n
+                if (!n.isVisibleToUser) continue
+                if (match(n)) {
+                    if (n.isClickable) return n
+                    label = label ?: n
+                }
                 for (i in 0 until n.childCount) n.getChild(i)?.let(stack::add)
             }
         }
-        return null
+        return label
     }
 
     private suspend fun waitFor(ms: Long, match: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? =
@@ -286,22 +403,47 @@ class PickerService : AccessibilityService() {
             hit
         }
 
-    /** ClipActivity read the clipboard. */
-    fun clipped(link: String?) {
-        clip?.complete(link)
+    /** The link copied since `since`. Android lets only the app in focus read the clipboard, so a
+     *  one-pixel window takes the focus for a moment. No screen opens, which Xiaomi phones block. */
+    private suspend fun readClip(since: Long): String? {
+        val got = CompletableDeferred<String?>()
+        val dot = object : View(this) {
+            override fun onWindowFocusChanged(hasFocus: Boolean) {
+                if (hasFocus) got.complete(copiedLink(context, since))
+            }
+        }
+        val params = WindowManager.LayoutParams(
+            1, 1,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        wm.addView(dot, params)
+        return try {
+            withTimeoutOrNull(2000) { got.await() }
+        } finally {
+            runCatching { wm.removeView(dot) }
+        }
     }
 
     // ----- Saving -----
 
     private fun save() {
-        val ready = picks.values.filter { it.state == State.Ready && it.link != null }
+        val ready = picks.values.filter { it.state == State.Ready }
         if (ready.isEmpty()) return
-        // Photos ticked in one post save together, the ticked ones only.
-        val works = ready.groupBy { it.link!! }.map { (link, ps) ->
-            val spots = ps.mapNotNull { it.index }
-            SaveWorker.enqueue(this, link, if (spots.size == ps.size) spots.distinct().sorted().joinToString(",") else null)
+        val works = buildList {
+            // Photos ticked in one post save together, the ticked ones only.
+            for ((link, ps) in ready.filter { it.link != null && !it.file }.groupBy { it.link!! }) {
+                val spots = ps.mapNotNull { it.index }
+                add(SaveWorker.enqueue(this@PickerService, link, if (spots.size == ps.size) spots.distinct().sorted().joinToString(",") else null, shots = ps.mapNotNull { it.shot }))
+            }
+            for (p in ready.filter { it.file }) add(SaveWorker.enqueue(this@PickerService, p.link!!, file = true, page = p.page, shots = listOfNotNull(p.shot)))
+            // No link at all: the shots of what was on screen.
+            ready.filter { it.link == null }.mapNotNull { it.shot }.takeIf { it.isNotEmpty() }?.let { add(SaveWorker.enqueue(this@PickerService, "", shots = it)) }
         }
         stop()
+        // Xiaomi phones can keep the card from opening over another app. The saves run either way.
+        Toast.makeText(this, copy.savingN(ready.size), Toast.LENGTH_SHORT).show()
         startActivity(Intent(this, ShareActivity::class.java)
             .putExtra(ShareActivity.EXTRA_WORKS, works.map { it.toString() }.toTypedArray())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -444,11 +586,30 @@ class PickerService : AccessibilityService() {
         var instance: PickerService? = null
             private set
 
-        private val MEDIA_CLASS = Regex("""(ImageView|VideoView|TextureView|SurfaceView|PlayerView)$""")
+        // "android.widget.Image" is a photo on a web page in Chrome and apps' web views.
+        private val MEDIA_CLASS = Regex("""(Image|ImageView|VideoView|TextureView|SurfaceView|PlayerView)$""")
         private val MEDIA_WORDS = Regex("""\b(photo|image|picture|video|reel|gif|larawan|litrato|bidyo)\b""", RegexOption.IGNORE_CASE)
-        private val SHARE = Regex("""^(share|send|share post|send post|share via|i-share|ibahagi|ipadala|compartir|enviar|partager|teilen)\b""", RegexOption.IGNORE_CASE)
+        private val MEDIA_ID = Regex("""image|photo|picture|media|video|player|thumbnail|gif""", RegexOption.IGNORE_CASE)
+        // What Chromium's web views (Chrome 98 and up, and apps' in-app browsers) put in a node's
+        // extras: its HTML role, and an image's own address (its srcset pick) or a link's.
+        private const val CHROME_ROLE = "AccessibilityNodeInfo.chromeRole"
+        private const val TARGET_URL = "AccessibilityNodeInfo.targetUrl"
+        private val MEDIA_ROLE = Regex("""image|video""")
+        // The address bars of Chrome and the Chromium browsers built on it, Samsung Internet, Firefox and Opera.
+        private val URL_BARS = listOf("url_bar", "location_bar_edit_text", "mozac_browser_toolbar_url_view", "url_field")
+        // Not a bare "Send", which in a chat app sends what you typed.
+        private val SHARE = Regex("""^(share|send post|send this|i-share|ibahagi|ipadala ang post|compartir|partager|teilen)\b""", RegexOption.IGNORE_CASE)
         private val COPY_LINK = Regex("""^(copy(\s+(link|url))?|kopyahin(\s+ang\s+link)?|i-copy\s+ang\s+link|copiar\s+(enlace|link)|copier\s+le\s+lien|link\s+kopieren)\b""", RegexOption.IGNORE_CASE)
         private val COUNTER = Regex("""(\d+)\s*(?:/|of|sa)\s*(\d+)""", RegexOption.IGNORE_CASE)
+        private val BAD_NAME = Regex("""[\\/:*?"<>|\n]""")
+        private val STAMP = SimpleDateFormat("yyyy-MM-dd HH.mm.ss", Locale.US)
+
+        /** Black all over, as a secure screen's shot is. */
+        private fun black(b: Bitmap): Boolean {
+            val step = maxOf(1, minOf(b.width, b.height) / 12)
+            for (y in 0 until b.height step step) for (x in 0 until b.width step step) if (b.getPixel(x, y) and 0xFFFFFF != 0) return false
+            return true
+        }
 
         /** Whether the user turned LodiSave's picker on in Android's accessibility settings. */
         fun enabled(ctx: Context): Boolean {

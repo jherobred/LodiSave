@@ -83,12 +83,25 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val url = inputData.getString(KEY_URL) ?: return@withContext Result.failure(workDataOf(KEY_ERROR to "nothing"))
         val pick = inputData.getString(KEY_PICK)
+        // The picker's shots of what it saw on screen, saved instead when the link gives nothing.
+        val shots = inputData.getStringArray(KEY_SHOTS).orEmpty().map(::File).filter(File::exists)
         runCatching { setForeground(foreground("reading", -1.0)) }
         val ctx = applicationContext
         val dir = File(ctx.cacheDir, "save-$id").apply { mkdirs() }
         // Previews for the picker outlive this save, until the next one tidies up after a day.
         val thumbs = File(ctx.cacheDir, "thumbs").apply { listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 86_400_000 }?.forEach { it.deleteRecursively() } }
+        fun saved(files: List<File>, failed: Int): Result {
+            val uris = files.map { Saver.publish(ctx, it) }
+            return Result.success(workDataOf(
+                KEY_URL to url,
+                KEY_URIS to uris.map(Uri::toString).toTypedArray(),
+                KEY_NAMES to files.map(File::getName).toTypedArray(),
+                KEY_MIMES to uris.map { ctx.contentResolver.getType(it).orEmpty() }.toTypedArray(),
+                KEY_FAILED to failed,
+            ))
+        }
         try {
+            if (url.isEmpty()) return@withContext saved(shots, 0)
             val zip = Saver.ytdlp(ctx) { report("helper", -1.0) }
             // Saves started together would both start Python, and the second start throws.
             synchronized(SaveWorker) { if (!Python.isStarted()) Python.start(AndroidPlatform(ctx)) }
@@ -96,12 +109,10 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             val sink = Sink { phase, percent -> report(phase, percent) }
             // QuickJS ships as a lib*.so so Android unpacks it executable, for YouTube's challenges.
             val qjs = File(ctx.applicationInfo.nativeLibraryDir, "libqjs.so").path
-            fun run(format: String?, items: String?): JSONObject {
-                val r = JSONObject(lodi.callAttr("save", url, dir.path, zip.path, sink, format, qjs, items, File(thumbs, "$id").path).toString())
-                if (r.has("error")) throw Failure(r.getString("error"))
-                return r
-            }
-            val r = run(null, pick)
+            fun answer(r: Any): JSONObject = JSONObject(r.toString()).also { if (it.has("error")) throw Failure(it.getString("error")) }
+            fun run(format: String?, items: String?) = answer(lodi.callAttr("save", url, dir.path, zip.path, sink, format, qjs, items, File(thumbs, "$id").path))
+            val r = if (inputData.getBoolean(KEY_FILE, false)) answer(lodi.callAttr("save_file", url, dir.path, sink, inputData.getString(KEY_PAGE)))
+            else run(null, pick)
             r.optJSONArray("choose")?.let { choose ->
                 val items = List(choose.length()) { choose.getJSONObject(it) }
                 return@withContext Result.success(workDataOf(
@@ -123,20 +134,14 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 files += if (Saver.join(parts[0], parts[1], out)) listOf(out)
                 else run("b", save.getInt("index").toString()).getJSONArray("saves").getJSONObject(0).getJSONArray("files").let { a -> List(a.length()) { File(a.getString(it)) } }
             }
-            val uris = files.map { Saver.publish(ctx, it) }
-            Result.success(workDataOf(
-                KEY_URL to url,
-                KEY_URIS to uris.map(Uri::toString).toTypedArray(),
-                KEY_NAMES to files.map(File::getName).toTypedArray(),
-                KEY_MIMES to uris.map { ctx.contentResolver.getType(it).orEmpty() }.toTypedArray(),
-                KEY_FAILED to r.optInt("failed"),
-            ))
+            saved(files, r.optInt("failed"))
         } catch (f: Failure) {
-            Result.failure(workDataOf(KEY_URL to url, KEY_ERROR to f.code))
+            if (shots.isNotEmpty()) saved(shots, 0) else Result.failure(workDataOf(KEY_URL to url, KEY_ERROR to f.code))
         } catch (e: Exception) {
-            Result.failure(workDataOf(KEY_URL to url, KEY_ERROR to (e.message ?: e.javaClass.simpleName).take(300)))
+            if (shots.isNotEmpty()) saved(shots, 0) else Result.failure(workDataOf(KEY_URL to url, KEY_ERROR to (e.message ?: e.javaClass.simpleName).take(300)))
         } finally {
             dir.deleteRecursively()
+            shots.forEach { it.parentFile?.deleteRecursively() }
         }
     }
 
@@ -154,12 +159,17 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         const val KEY_KINDS = "kinds"
         const val KEY_THUMBS = "thumbs"
         const val KEY_ERROR = "error"
+        const val KEY_FILE = "file"
+        const val KEY_PAGE = "page"
+        const val KEY_SHOTS = "shots"
 
         /** Saves a link. `pick` names the items of a post to save ("0,2"); without it a post with
-         *  several asks which to save. Saves run side by side. */
-        fun enqueue(ctx: Context, url: String, pick: String? = null): UUID {
+         *  several asks which to save. `file` says the link is a photo or video file itself, found on
+         *  the web `page`. `shots` save instead when the link gives nothing, or when there's no link
+         *  (an empty one). Saves run side by side. */
+        fun enqueue(ctx: Context, url: String, pick: String? = null, file: Boolean = false, page: String? = null, shots: List<File> = emptyList()): UUID {
             val request = OneTimeWorkRequestBuilder<SaveWorker>()
-                .setInputData(workDataOf(KEY_URL to url, KEY_PICK to pick))
+                .setInputData(workDataOf(KEY_URL to url, KEY_PICK to pick, KEY_FILE to file, KEY_PAGE to page, KEY_SHOTS to shots.map(File::getPath).toTypedArray()))
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag(TAG)
                 .addTag("url:$url")

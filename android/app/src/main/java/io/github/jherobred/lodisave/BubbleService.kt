@@ -16,6 +16,7 @@ import android.graphics.drawable.GradientDrawable
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.ImageView
@@ -30,8 +31,6 @@ import kotlin.math.abs
  * to hide him.
  */
 class BubbleService : Service() {
-    private var view: ImageView? = null
-
     override fun onBind(intent: Intent?) = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -43,7 +42,7 @@ class BubbleService : Service() {
         // Android 13 and older know no "special use" type, and refuse one they don't know.
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
         ServiceCompat.startForeground(this, NOTIFICATION, note(), type)
-        if (view == null) show()
+        if (shown == null) show()
         return START_STICKY
     }
 
@@ -135,12 +134,12 @@ class BubbleService : Service() {
             dragging
         }
         wm.addView(lodi, params)
-        view = lodi
+        shown = lodi
     }
 
     override fun onDestroy() {
-        view?.let { getSystemService(WindowManager::class.java).removeView(it) }
-        view = null
+        shown?.let { getSystemService(WindowManager::class.java).removeView(it) }
+        shown = null
         super.onDestroy()
     }
 
@@ -148,6 +147,11 @@ class BubbleService : Service() {
         const val CHANNEL = "bubble"
         const val NOTIFICATION = 8
         const val ACTION_HIDE = "hide"
+
+        /** Lodi while he floats, which the picker moves out of the way of its shots and taps. */
+        @SuppressLint("StaticFieldLeak")
+        var shown: View? = null
+            private set
 
         /** Floats Lodi when the setting is on and Android allows drawing over other apps, and hides him otherwise. */
         fun sync(ctx: Context) {

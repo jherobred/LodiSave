@@ -62,10 +62,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** The first web link in the clipboard. Android only shares the clipboard with the app in focus. */
-fun copiedLink(ctx: Context): String? {
+/** The first web link in the clipboard, copied at `since` (System.currentTimeMillis) or later.
+ *  Android only shares the clipboard with the app in focus. */
+fun copiedLink(ctx: Context, since: Long = 0): String? {
     val clip = ctx.getSystemService(ClipboardManager::class.java)?.primaryClip ?: return null
-    if (clip.itemCount == 0) return null
+    if (clip.itemCount == 0 || clip.description.timestamp in 1 until since) return null
     val text = clip.getItemAt(0).coerceToText(ctx)?.toString() ?: return null
     return LINK.find(text)?.value
 }
