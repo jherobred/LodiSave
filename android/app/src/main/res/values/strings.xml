@@ -5,4 +5,7 @@
     <string name="widget_name">LodiSave</string>
     <string name="widget_label">Save link</string>
     <string name="widget_description">One tap saves the link you copied.</string>
+    <string name="picker_label">LodiSave picker</string>
+    <string name="picker_summary">Round checkboxes on photos and videos in any app</string>
+    <string name="picker_description">Tap the floating Lodi in any app and a round checkbox shows on each photo and video. When you tick one, LodiSave presses that post\'s Share and Copy link for you, so it can save the original file. It looks at the screen only while you\'re picking, and sends nothing anywhere but to the sites you save from.</string>
 </resources>

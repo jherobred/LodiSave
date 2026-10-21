@@ -224,6 +224,20 @@ private fun Home(clip: String?, focus: Int) {
                     }
                 }
                 Text(copy.bubbleHint, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
+                // Checked again on each return, after the user switches it in Android's settings.
+                val picker = remember(focus) { PickerService.enabled(ctx) }
+                SettingRow(copy.picker) {
+                    Segmented(listOf("on" to copy.on, "off" to copy.off), if (picker) "on" else "off") {
+                        // Lodi is the picker's switch, so he floats too.
+                        if (it == "on" && !bubble) { bubble = true; prefs.bubble = true }
+                        // Only the user can turn an accessibility service on or off, in Android's settings.
+                        if (it == "on" && !Settings.canDrawOverlays(ctx)) ctx.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${ctx.packageName}".toUri()))
+                        else ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    }
+                }
+                Text("${copy.pickerHint} ${copy.pickerRestricted}", fontFamily = Geist, fontSize = 13.sp, color = t.muted)
+                Text(copy.appInfo, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = t.accent,
+                    modifier = Modifier.clip(CircleShape).clickable { ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${ctx.packageName}".toUri())) }.padding(vertical = 4.dp))
                 Text("LodiSave ${ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName} · github.com/jherobred/LodiSave", fontFamily = GeistMono, fontSize = 12.sp, color = t.muted,
                     modifier = Modifier.clickable { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/jherobred/LodiSave".toUri())) } })
             }

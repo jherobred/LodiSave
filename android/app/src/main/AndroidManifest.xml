@@ -65,6 +65,29 @@
                 android:resource="@xml/widget_info" />
         </receiver>
 
+        <!-- Reads the copied link for the picker: Android shares the clipboard only with the app in front. -->
+        <activity
+            android:name=".ClipActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.LodiSave.Floating" />
+
+        <!-- Round checkboxes on photos and videos in other apps, once turned on in Accessibility settings. -->
+        <service
+            android:name=".PickerService"
+            android:exported="true"
+            android:label="@string/picker_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/picker" />
+        </service>
+
         <service
             android:name=".BubbleService"
             android:exported="false"

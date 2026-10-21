@@ -41,6 +41,22 @@ class Copy(val tl: Boolean) {
     val bubbleHint = t("Over every app: tap Copy link on a post, then tap Lodi.", "Sa ibabaw ng bawat app: i-tap ang Copy link sa post, tapos i-tap si Lodi.")
     val bubbleNote = t("Lodi is floating. Copy a link, then tap Lodi.", "Lumulutang si Lodi. Mag-copy ng link, tapos i-tap si Lodi.")
     val bubbleHide = t("Hide Lodi", "Itago si Lodi")
+    val pickHint = t("Tap ○ on photos and videos", "I-tap ang ○ sa mga photo at video")
+    fun pickedN(n: Int) = t("$n picked", "$n ang napili")
+    val pickFetching = t("Getting the post's link…", "Kinukuha ang link ng post…")
+    val pickNoLink = t("Couldn't find Share then Copy link on that post", "Walang Share at Copy link sa post na iyon")
+    val pickCopied = t("Copied link", "Na-copy na link")
+    val picker = t("Pick in other apps", "Pumili sa ibang apps")
+    val pickerHint = t(
+        "Turn on LodiSave picker in Accessibility. Then tap the floating Lodi in Threads, Instagram, Reddit or any app, and tick the round circles on photos and videos.",
+        "I-on ang LodiSave picker sa Accessibility. Tapos i-tap si Lodi sa Threads, Instagram, Reddit o kahit anong app, at i-tick ang mga bilog sa photo at video.",
+    )
+    val pickerRestricted = t(
+        "If Android says the setting is restricted, open App info, tap ⋮, then Allow restricted settings.",
+        "Kung sabihin ng Android na restricted ang setting, buksan ang App info, i-tap ang ⋮, tapos Allow restricted settings.",
+    )
+    val appInfo = t("App info", "App info")
+    val openAccessibility = t("Open Accessibility", "Buksan ang Accessibility")
 
     /** Title and explanation for an error code from the save engine, or its own message. */
     fun error(code: String): Pair<String, String> = when (code) {

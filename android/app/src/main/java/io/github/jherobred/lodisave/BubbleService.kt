@@ -91,7 +91,9 @@ class BubbleService : Service() {
             contentDescription = getString(R.string.share_label)
             setOnClickListener {
                 animate().scaleX(0.86f).scaleY(0.86f).setDuration(90).withEndAction { animate().scaleX(1f).scaleY(1f).setDuration(160).start() }.start()
-                startActivity(Intent(this@BubbleService, ShareActivity::class.java)
+                // With the picker on, Lodi shows round checkboxes on the app's photos and videos.
+                // Without it he saves the copied link.
+                PickerService.instance?.toggle() ?: startActivity(Intent(this@BubbleService, ShareActivity::class.java)
                     .putExtra(ShareActivity.EXTRA_CLIPBOARD, true)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }

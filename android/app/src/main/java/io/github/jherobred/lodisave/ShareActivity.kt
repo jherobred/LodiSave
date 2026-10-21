@@ -90,6 +90,12 @@ class ShareActivity : ComponentActivity() {
 
     private fun start() {
         started = true
+        // Saves the picker started in another app, to follow here.
+        intent.getStringArrayExtra(EXTRA_WORKS)?.let { ids ->
+            local.value = null
+            ids.mapTo(saves, UUID::fromString)
+            return
+        }
         val text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
         val streams = when (intent.action) {
             Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))
@@ -137,6 +143,7 @@ class ShareActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_CLIPBOARD = "clipboard"
+        const val EXTRA_WORKS = "works"
     }
 }
 

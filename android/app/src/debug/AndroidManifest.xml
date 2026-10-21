@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: a pretend social feed for testing the picker. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name=".FeedTestActivity"
+            android:exported="true"
+            android:theme="@style/Theme.LodiSave" />
+    </application>
+</manifest>
