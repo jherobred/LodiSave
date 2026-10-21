@@ -170,5 +170,6 @@ kbd { padding: 4px 9px; border-radius: 999px; background: var(--soft); font: inh
 .ext .row { margin: 0 }
 .ext .ghost { background: var(--surface) }
 .hint { margin: 8px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.4 }
+.steps { margin-top: 4px; padding-left: 18px }
 .about { margin: 0 0 14px; color: var(--muted); font: 400 12px 'Geist Mono', monospace }
 .primary.wide { width: 100%; min-height: 44px; box-shadow: none }

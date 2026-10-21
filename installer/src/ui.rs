@@ -40,7 +40,10 @@ enum Message {
     Install(Options),
     #[serde(rename_all = "camelCase")]
     Uninstall { remove_data: bool },
-    Launch,
+    Launch {
+        #[serde(default)]
+        extension: bool,
+    },
     OpenUrl { url: String },
 }
 
@@ -216,9 +219,13 @@ pub fn run(mode: Mode) -> ! {
                     busy = true;
                     start_uninstall(proxy.clone(), dir.clone(), remove_data);
                 }
-                Ok(Message::Launch) => {
+                Ok(Message::Launch { extension }) => {
                     if let Some(dir) = &installed_dir {
-                        let _ = std::process::Command::new(dir.join(APP_EXE)).current_dir(dir).spawn();
+                        let mut app = std::process::Command::new(dir.join(APP_EXE));
+                        if extension {
+                            app.arg("--extension");
+                        }
+                        let _ = app.current_dir(dir).spawn();
                     }
                     *control_flow = ControlFlow::Exit;
                 }
@@ -274,6 +281,7 @@ mod tests {
         for cmd in ["ready", "drag", "minimize", "close", "launch"] {
             assert!(serde_json::from_str::<Message>(&format!(r#"{{"cmd":"{cmd}"}}"#)).is_ok(), "{cmd}");
         }
+        assert!(matches!(serde_json::from_str(r#"{"cmd":"launch","extension":true}"#), Ok(Message::Launch { extension: true })));
         assert!(serde_json::from_str::<Message>(r#"{"cmd":"pickFolder","dir":"C:\\"}"#).is_ok());
         assert!(serde_json::from_str::<Message>(r#"{"cmd":"openUrl","url":"https://x"}"#).is_ok());
     }

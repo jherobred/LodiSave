@@ -22,7 +22,7 @@ LodiSave is a Windows tray app and a browser extension for Chrome and Edge. Righ
 ## Install
 
 1. Download `LodiSave-Setup-0.2.3.exe` from [Releases](https://github.com/jherobred/LodiSave/releases). The builds aren't code-signed yet, so SmartScreen may warn: choose More info, then Run anyway.
-2. For the browser extension, open LodiSave from the tray and choose Settings, then Browser extension, Set up. In `chrome://extensions` or `edge://extensions`, turn on Developer mode, choose Load unpacked and pick the folder that opened. The same files are in `LodiSave-extension-0.2.3.zip`.
+2. For the browser extension, choose Set up extension when Setup finishes, or Settings, then Browser extension, Set up in the tray panel. LodiSave opens a new Chrome, Edge or Brave window with the Extensions address copied, and keeps a checklist on screen: press Ctrl+V and Enter in the address bar, turn on Developer mode, click Load unpacked, then choose Copy folder, press Ctrl+V and Select Folder. Browsers only let apps install extensions from their stores, and they won't open their Extensions page for another app, so these clicks stay yours. The same files are in `LodiSave-extension-0.2.3.zip`.
 
 `LodiSave-0.2.3-portable.exe` runs without installing.
 

@@ -214,6 +214,7 @@ const actions = {
   openLicense: () => openSheet("license"),
   closeSheet,
   launch: () => post("launch"),
+  launchExtension: () => post("launch", { extension: true }),
   retry: () => show(installing ? "welcome" : "remove"),
 };
 

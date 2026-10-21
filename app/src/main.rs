@@ -8,7 +8,7 @@ mod mp4;
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -16,6 +16,8 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWi
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
+use windows::Win32::System::Registry::{HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
+use windows::core::{HSTRING, PCWSTR};
 
 /// The panel is 380x600; the window adds room for its shadow.
 const W: f64 = 404.0;
@@ -212,14 +214,83 @@ fn open_repo(app: AppHandle) -> Result<(), String> {
     app.opener().open_url(REPO, None::<&str>).map_err(|e| e.to_string())
 }
 
-/// The installer puts the unpacked extension next to the app, for "Load unpacked".
-#[tauri::command]
-fn open_extension(app: AppHandle) -> Result<(), String> {
+/// A registry string, or None.
+fn reg_text(root: HKEY, key: &str, name: Option<&str>) -> Option<String> {
+    let (key, name) = (HSTRING::from(key), name.map(HSTRING::from));
+    let name = name.as_ref().map_or(PCWSTR::null(), |n| PCWSTR(n.as_ptr()));
+    let mut buf = [0u16; 1024];
+    let mut size = std::mem::size_of_val(&buf) as u32;
+    let ok = unsafe { RegGetValueW(root, &key, name, RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr().cast()), Some(&mut size)) };
+    ok.is_ok().then(|| String::from_utf16_lossy(&buf[..(size as usize / 2).saturating_sub(1)]))
+}
+
+/// Browsers that load unpacked extensions: name, exe, default-browser ProgId prefix, Extensions page.
+const BROWSERS: [(&str, &str, &str, &str); 3] = [
+    ("Chrome", "chrome.exe", "ChromeHTML", "chrome://extensions"),
+    ("Edge", "msedge.exe", "MSEdgeHTM", "edge://extensions"),
+    ("Brave", "brave.exe", "BraveHTML", "brave://extensions"),
+];
+
+/// The default browser when it is one of BROWSERS, else the first one installed.
+fn extension_browser() -> Option<(&'static str, &'static str, PathBuf)> {
+    let find = |exe: &str| {
+        let key = format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}");
+        [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE]
+            .into_iter()
+            .find_map(|root| reg_text(root, &key, None))
+            .map(|p| PathBuf::from(p.trim_matches('"')))
+            .filter(|p| p.is_file())
+    };
+    let choice = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice";
+    let default = reg_text(HKEY_CURRENT_USER, choice, Some("ProgId")).unwrap_or_default();
+    let mut order = BROWSERS;
+    order.sort_by_key(|b| !default.starts_with(b.2));
+    order.into_iter().find_map(|(name, exe, _, page)| Some((name, page, find(exe)?)))
+}
+
+/// While set, the panel is the extension checklist and stays up when the browser takes focus.
+static SETUP: AtomicBool = AtomicBool::new(false);
+
+/// Browsers only let programs install extensions from their stores, and they ignore their own
+/// pages (chrome://extensions) when another program passes one. So this opens a new browser
+/// window with the Extensions address on the clipboard, and keeps the panel up as a checklist
+/// that copies the folder for Load unpacked.
+fn setup_extension(app: &AppHandle) -> Result<(), String> {
     let dir = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name("extension");
     if !dir.is_dir() {
         return app.opener().open_url(format!("{REPO}/releases/latest"), None::<&str>).map_err(|e| e.to_string());
     }
-    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+    let Some((name, page, exe)) = extension_browser() else {
+        return app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string());
+    };
+    copy_text(page.into())?;
+    std::process::Command::new(exe).arg("--new-window").spawn().map_err(|e| e.to_string())?;
+    hide_panel(app);
+    let app = app.clone();
+    let payload = serde_json::json!({ "name": name, "page": page, "dir": dir });
+    std::thread::spawn(move || {
+        // After the browser takes focus, so the panel shows over it without taking focus back.
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        SETUP.store(true, Ordering::SeqCst);
+        show_panel(&app, None, true);
+        let _ = app.emit("extension://opened", payload);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn open_extension(app: AppHandle) -> Result<(), String> {
+    setup_extension(&app)
+}
+
+#[tauri::command]
+fn end_setup() {
+    SETUP.store(false, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn copy_text(text: String) -> Result<(), String> {
+    arboard::Clipboard::new().and_then(|mut c| c.set_text(text)).map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -280,6 +351,8 @@ fn on_launch(app: &AppHandle, args: &[String]) {
     // The installer asks a running copy to quit before it replaces or removes the files.
     if args.iter().any(|a| a == "--quit") {
         app.exit(0);
+    } else if args.iter().any(|a| a == "--extension") {
+        let _ = setup_extension(app);
     } else if !args.iter().any(|a| a == "--background") {
         show_panel(app, None, false);
     }
@@ -320,7 +393,7 @@ fn main() {
                 .build()?;
             let blur = handle.clone();
             panel.on_window_event(move |e| {
-                if let WindowEvent::Focused(false) = e {
+                if let WindowEvent::Focused(false) = e && !SETUP.load(Ordering::SeqCst) {
                     HIDDEN_AT.store(now_ms(), Ordering::SeqCst);
                     hide_panel(&blur);
                 }
@@ -344,6 +417,8 @@ fn main() {
             open_security,
             open_repo,
             open_extension,
+            end_setup,
+            copy_text,
             info,
             set_autostart,
             hide,

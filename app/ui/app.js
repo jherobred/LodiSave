@@ -24,7 +24,9 @@ const COPY = {
     recent: 'Recent', folder: 'Open folder', none: 'Your saves show up here.', capture: 'Capture area',
     settings: 'Settings', close: 'Close', language: 'Language', motion: 'Motion', autostart: 'Start with Windows', on: 'On', off: 'Off',
     extension: 'Browser extension', setup: 'Set up', done: 'Done',
-    extensionHint: 'In Chrome or Edge, open Extensions, turn on Developer mode, choose Load unpacked and pick the folder that opens.',
+    extensionHint: () => (ui.ext ? `${ui.ext.name} is open. Four steps, this list stays here:` : 'Opens Chrome, Edge or Brave and walks you through loading the extension.'),
+    extStep1: "In the new window's address bar, press Ctrl+V, then Enter.", extStep2: 'Turn on Developer mode.', extStep3: 'Click Load unpacked.', extStep4: 'Copy the folder, then press Ctrl+V and Select Folder.',
+    copyPage: 'Copy address', copyDir: 'Copy folder', copied: 'Copied',
     ago: (s) => (s < 60 ? 'now' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`),
   },
   tl: {
@@ -47,7 +49,9 @@ const COPY = {
     recent: 'Mga na-save kanina', folder: 'Buksan ang folder', none: 'Dito lalabas ang mga na-save mo.', capture: 'Kunan ang screen',
     settings: 'Settings', close: 'Isara', language: 'Wika', motion: 'Galaw', autostart: 'Buksan pag-start ng Windows', on: 'On', off: 'Off',
     extension: 'Browser extension', setup: 'I-set up', done: 'Sige',
-    extensionHint: 'Sa Chrome o Edge, buksan ang Extensions, i-on ang Developer mode, piliin ang Load unpacked at ang folder na bubukas.',
+    extensionHint: () => (ui.ext ? `Bukas na ang ${ui.ext.name}. Apat na hakbang, nandito lang ang listahan:` : 'Bubuksan ang Chrome, Edge o Brave at gagabayan ka sa pag-load ng extension.'),
+    extStep1: 'Sa address bar ng bagong window, pindutin ang Ctrl+V, tapos Enter.', extStep2: 'I-on ang Developer mode.', extStep3: 'I-click ang Load unpacked.', extStep4: 'I-copy ang folder, tapos pindutin ang Ctrl+V at Select Folder.',
+    copyPage: 'I-copy ang address', copyDir: 'I-copy ang folder', copied: 'Na-copy',
     ago: (s) => (s < 60 ? 'ngayon' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`),
   },
 };
@@ -229,6 +233,18 @@ $('extension').onclick = () => invoke('open_extension');
 $('repo').onclick = () => invoke('open_repo');
 $('open-prefs').onclick = () => $('prefs').showModal();
 $('close-prefs').onclick = () => $('prefs').close();
+$('prefs').onclose = () => {
+  if (ui.ext) invoke('end_setup');
+  ui.ext = null;
+  $('steps').hidden = true;
+  paint();
+};
+for (const [id, key] of [['copy-page', 'page'], ['copy-dir', 'dir']]) {
+  $(id).onclick = async () => {
+    await invoke('copy_text', { text: ui.ext[key] });
+    $(id).textContent = say('copied');
+  };
+}
 $('prefs').onclick = (e) => {
   const b = e.target.closest('[data-v]'), key = b?.parentElement.dataset.pref;
   if (!key) return;
@@ -260,6 +276,15 @@ listen('panel://shown', ({ payload }) => {
   readClipboard();
   loadRecent();
 });
+// Set up opened the browser. The panel stays up as the checklist until Done.
+listen('extension://opened', ({ payload }) => {
+  clearTimeout(peekTimer);
+  ui.ext = payload;
+  $('steps').hidden = false;
+  if (!$('prefs').open) $('prefs').showModal();
+  paint();
+});
+
 listen('job://progress', ({ payload }) => {
   ui.job = payload;
   if (ui.state === 'working') paint();
