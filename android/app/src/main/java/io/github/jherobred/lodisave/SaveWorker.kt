@@ -90,7 +90,8 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         val thumbs = File(ctx.cacheDir, "thumbs").apply { listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 86_400_000 }?.forEach { it.deleteRecursively() } }
         try {
             val zip = Saver.ytdlp(ctx) { report("helper", -1.0) }
-            if (!Python.isStarted()) Python.start(AndroidPlatform(ctx))
+            // Saves started together would both start Python, and the second start throws.
+            synchronized(SaveWorker) { if (!Python.isStarted()) Python.start(AndroidPlatform(ctx)) }
             val lodi = Python.getInstance().getModule("lodi")
             val sink = Sink { phase, percent -> report(phase, percent) }
             // QuickJS ships as a lib*.so so Android unpacks it executable, for YouTube's challenges.

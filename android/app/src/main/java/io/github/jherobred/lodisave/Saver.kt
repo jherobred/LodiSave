@@ -30,7 +30,9 @@ object Saver {
     /**
      * yt-dlp's official zipapp, which Python imports straight from the zip. Sites change often and old
      * versions stop working, so a copy older than a week is replaced, keeping the old one if that fails.
+     * One save at a time: saves started together wait for the first one's copy.
      */
+    @Synchronized
     fun ytdlp(ctx: Context, onFirstDownload: () -> Unit): File {
         val file = File(ctx.filesDir, "yt-dlp.zip")
         if (file.exists() && System.currentTimeMillis() - file.lastModified() < WEEK) return file
