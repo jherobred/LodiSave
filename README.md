@@ -36,6 +36,8 @@ The Android app in `android/` saves the same way, without a browser:
 - **Pick from a post.** A post with several photos or videos shows them all with round checkboxes, like the PC picker. Tick some or all, then save at once.
 - **Several at once.** Share or paste more links while one is saving. They save side by side, each with its own bar.
 - **Floating Lodi** (Settings) sits over every app. Tap Copy link on a post, then tap Lodi, and he saves the original file. Drag him to either edge, hold him to hide him.
+- **Pick in other apps** (Settings, then turn on LodiSave picker in Android's Accessibility settings). Tap the floating Lodi in Threads, Instagram, Reddit or any app and a round checkbox shows on each photo and video, like the PC picker. Ticking one presses that post's Share, then Copy link, for you; Save saves the original files, only the photos you ticked from a carousel. Android may call the setting restricted for an app installed from a file: open App info, tap ⋮, then Allow restricted settings.
+- Reddit posts, galleries and videos save through the embed page Reddit makes for other sites.
 - **The round home-screen widget** saves the link you copied in one tap.
 - Saves go to `Pictures/LodiSave`, `Movies/LodiSave` and `Music/LodiSave`, so the gallery shows them.
 - Separate video and audio are joined with Android's own MediaMuxer, so there's no FFmpeg here either.
