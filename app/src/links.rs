@@ -1,7 +1,7 @@
-//! Saving a copied link. Threads, Instagram and X posts go through LodiSave's own readers first,
-//! which see every photo and video of a post, as in android/app/src/main/python/lodi.py. Other
-//! videos go through yt-dlp, which LodiSave fetches on first use. Pages with no video fall back to
-//! their og:image. Progress reaches the panel as `job://progress` events.
+//! Saving a copied link. Threads, Instagram, X and Reddit posts go through LodiSave's own readers
+//! first, which see every photo and video of a post, as in android/app/src/main/python/lodi.py.
+//! Other videos go through yt-dlp, which LodiSave fetches on first use. Pages with no video fall
+//! back to their og:image. Progress reaches the panel as `job://progress` events.
 //! Errors are short codes the panel translates ("login", "nothing", "offline", "helper"), or
 //! yt-dlp's own message.
 
@@ -224,6 +224,10 @@ fn unique(dir: &Path, stem: &str, ext: &str) -> PathBuf {
 
 fn video(app: &AppHandle, exe: &Path, url: &str, dir: &Path) -> Result<Vec<PathBuf>, String> {
     progress(app, "reading", None);
+    // A bare v.redd.it link: its playlist is public, where the post page sends a bot check.
+    let reddit = reddit_video(url);
+    let playlist = reddit.map(|id| format!("https://v.redd.it/{id}/DASHPlaylist.mpd"));
+    let url = playlist.as_deref().unwrap_or(url);
     let read = |generic: bool| {
         let mut c = base(exe);
         if generic {
@@ -244,11 +248,16 @@ fn video(app: &AppHandle, exe: &Path, url: &str, dir: &Path) -> Result<Vec<PathB
             return Err(code);
         }
     }
-    let info: Value = serde_json::from_slice(&out.stdout).map_err(|_| "nothing".to_string())?;
+    let mut info: Value = serde_json::from_slice(&out.stdout).map_err(|_| "nothing".to_string())?;
+    if let Some(id) = reddit {
+        // The playlist's own name is DASHPlaylist.
+        info["title"] = "reddit".into();
+        info["id"] = id.into();
+    }
     let tmp = std::env::temp_dir().join("LodiSave");
     let _ = std::fs::create_dir_all(&tmp);
     let json = tmp.join(format!("{}.json", std::process::id()));
-    std::fs::write(&json, &out.stdout).map_err(|e| e.to_string())?;
+    std::fs::write(&json, info.to_string()).map_err(|e| e.to_string())?;
     let result = (|| -> Result<Vec<PathBuf>, String> {
         let template = dir.join("%(title).70B [%(id)s].%(ext)s");
         // With FFmpeg on PATH yt-dlp merges the best streams itself.
@@ -493,11 +502,115 @@ fn x_items(id: &str) -> Option<Vec<Item>> {
     Some(named(found, &stem)).filter(|items| !items.is_empty())
 }
 
+/// The subreddit, when named, and the post id in a reddit.com path: r/<sub>/comments/<id>,
+/// comments/<id> or gallery/<id>.
+fn reddit_path(path: &str) -> Option<(Option<&str>, &str)> {
+    let (sub, id) = match path.split('/').collect::<Vec<_>>().as_slice() {
+        ["r", sub, "comments" | "gallery", id, ..] => (Some(*sub), *id),
+        ["comments" | "gallery", id, ..] => (None, *id),
+        _ => return None,
+    };
+    (sub.is_none_or(word) && word(id)).then_some((sub, id))
+}
+
+/// The subreddit, when the link names it, and the id of a link to a Reddit post.
+fn reddit_post(url: &str) -> Option<(Option<&str>, &str)> {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let (host, path) = rest.split(['?', '#']).next()?.split_once('/')?;
+    if host == "redd.it" {
+        let id = path.split('/').next()?;
+        return word(id).then_some((None, id));
+    }
+    (host == "reddit.com" || host.ends_with(".reddit.com")).then(|| reddit_path(path)).flatten()
+}
+
+/// The id in a bare v.redd.it video link.
+fn reddit_video(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let id = rest.strip_prefix("v.redd.it/")?.split(['/', '?', '#']).next()?;
+    word(id).then_some(id)
+}
+
+/// The subreddit, when named, and the id of every link to a Reddit post in a page.
+fn reddit_links(page: &str) -> impl Iterator<Item = (Option<&str>, &str)> {
+    page.match_indices("reddit.com/").filter_map(|(i, s)| {
+        reddit_path(page[i + s.len()..].split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '/')).next()?)
+    })
+}
+
+/// The original of a Reddit preview image, which is named after it:
+/// preview.redd.it/<title>-v0-<id>.jpeg?width=640 is i.redd.it/<id>.jpeg.
+fn reddit_original(preview: &str) -> Option<String> {
+    let name = preview.strip_prefix("https://preview.redd.it/")?.split(|c: char| !(c.is_alphanumeric() || "-_.".contains(c))).next()?;
+    let (stem, ext) = name.split_once('.')?;
+    let id = stem.rsplit_once("-v0-").map_or(stem, |(_, id)| id);
+    let ok = !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric()) && ["jpeg", "jpg", "png", "gif", "webp"].contains(&ext);
+    ok.then(|| format!("https://i.redd.it/{id}.{ext}"))
+}
+
+/// What a Reddit embed page shows: its video, the biggest of the MP4s Reddit made with picture and
+/// sound in one file, else its photos in order, a gallery's when it has one.
+fn reddit_media(page: &str) -> Vec<String> {
+    let mp4 = page.split_once(r#"packaged-media-json=""#).and_then(|(_, a)| {
+        let data: Value = serde_json::from_str(&a[..a.find('"')?].replace("&quot;", "\"").replace("&amp;", "&")).ok()?;
+        let sizes = data["playbackMp4s"]["permutations"].as_array()?;
+        let biggest = sizes.iter().max_by_key(|p| p["source"]["dimensions"]["height"].as_u64().unwrap_or(0))?;
+        biggest["source"]["url"].as_str().map(str::to_string)
+    });
+    if let Some(mp4) = mp4 {
+        return vec![mp4];
+    }
+    let shown = page.split_once("<gallery-carousel").and_then(|(_, g)| g.split_once("</gallery-carousel>")).map_or(page, |(g, _)| g);
+    let mut photos = Vec::new();
+    for src in shown.match_indices("https://preview.redd.it/").filter_map(|(i, _)| reddit_original(&shown[i..])) {
+        if !photos.contains(&src) {
+            photos.push(src);
+        }
+    }
+    photos
+}
+
+/// A post's subreddit, from the post's feed.
+fn reddit_sub(post: &str) -> Option<String> {
+    let feed = format!("https://www.reddit.com/comments/{post}/.rss");
+    for wait in [true, false] {
+        let out = curl(&["--max-filesize", "2000000", "-w", "\n%{http_code} %header{x-ratelimit-reset}", "--"]).arg(&feed).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let (body, status) = text.rsplit_once('\n')?;
+        match status.split_once(' ') {
+            // Without a login Reddit answers few feed requests and says, in whole seconds, when to
+            // come back. The wait is capped so the panel doesn't hang.
+            Some(("429", reset)) if wait => std::thread::sleep(std::time::Duration::from_secs(reset.parse::<u64>().unwrap_or(2).min(5) + 1)),
+            _ => return reddit_links(body).find_map(|(sub, id)| sub.filter(|_| id == post)).map(str::to_string),
+        }
+    }
+    None
+}
+
+/// Every photo and video of a Reddit post, from the embed page Reddit makes for other sites
+/// (reddit.com itself sends scripts a bot check). A link with no subreddit finds it in the post's
+/// feed, and a crosspost is followed once to the post it shares. None when the post can't be read
+/// this way.
+fn reddit_items(sub: Option<&str>, post: &str, follow: bool) -> Option<Vec<Item>> {
+    let sub = sub.map(str::to_string).or_else(|| reddit_sub(post))?;
+    let (page, _) = page_of(&format!("https://embed.reddit.com/r/{sub}/comments/{post}/"))?;
+    let found = reddit_media(&page);
+    if found.is_empty() {
+        // A crosspost shows only a link to the post it shares.
+        let (sub, other) = reddit_links(&page).find(|(_, id)| *id != post)?;
+        return follow.then(|| reddit_items(sub, other, false)).flatten();
+    }
+    Some(named(found.into_iter().map(|s| vec![s]).collect(), &format!("{sub} {post}")))
+}
+
 /// A post's photos and videos from LodiSave's own readers. None hands the link to yt-dlp.
 fn site_items(url: &str) -> Option<Vec<Item>> {
-    match meta_code(url) {
-        Some(code) => meta_items(&page_of(url)?.0, code),
-        None => x_items(x_id(url)?),
+    if let Some(code) = meta_code(url) {
+        meta_items(&page_of(url)?.0, code)
+    } else if let Some((sub, post)) = reddit_post(url) {
+        reddit_items(sub, post, true)
+    } else {
+        x_items(x_id(url)?)
     }
 }
 
@@ -689,5 +802,31 @@ mod tests {
         assert_eq!(super::x_token("1585341984679469056"), "3uchycv2wqcdge");
         assert_eq!(super::x_token("266031293945503744"), "n7rfhxzwhkcjm");
         assert_eq!(super::x_token("20"), "6dq");
+    }
+
+    #[test]
+    fn reddit_reader() {
+        use super::{reddit_links, reddit_media, reddit_original, reddit_post, reddit_video};
+        assert_eq!(reddit_post("https://www.reddit.com/r/aww/comments/90bu6w/heat_index/?utm_source=share"), Some((Some("aww"), "90bu6w")));
+        assert_eq!(reddit_post("https://old.reddit.com/comments/90bu6w"), Some((None, "90bu6w")));
+        assert_eq!(reddit_post("https://www.reddit.com/gallery/1xb6c3p"), Some((None, "1xb6c3p")));
+        assert_eq!(reddit_post("https://redd.it/1xambj5"), Some((None, "1xambj5")));
+        assert_eq!(reddit_post("https://www.reddit.com/r/aww/"), None);
+        assert_eq!(reddit_post("https://notreddit.com/comments/90bu6w"), None);
+        assert_eq!(reddit_video("https://v.redd.it/gyh95hiqc0b11"), Some("gyh95hiqc0b11"));
+        assert_eq!(reddit_video("https://www.reddit.com/r/aww/comments/90bu6w/"), None);
+
+        assert_eq!(reddit_original("https://preview.redd.it/tiny-room-v0-fatco1py8pwh1.jpeg?width=640&amp;crop=smart").as_deref(), Some("https://i.redd.it/fatco1py8pwh1.jpeg"));
+        assert_eq!(reddit_original("https://preview.redd.it/abc123.png?width=640").as_deref(), Some("https://i.redd.it/abc123.png"));
+        assert_eq!(reddit_original("https://preview.redd.it/no-id.jpeg"), None);
+
+        let video = r#"<shreddit-player-2 packaged-media-json="{&quot;playbackMp4s&quot;:{&quot;permutations&quot;:[{&quot;source&quot;:{&quot;dimensions&quot;:{&quot;height&quot;:1080},&quot;url&quot;:&quot;https://packaged-media.redd.it/v/1080.mp4?a=1&amp;b=2&quot;}},{&quot;source&quot;:{&quot;dimensions&quot;:{&quot;height&quot;:480},&quot;url&quot;:&quot;https://packaged-media.redd.it/v/480.mp4&quot;}}]}}">"#;
+        assert_eq!(reddit_media(video), ["https://packaged-media.redd.it/v/1080.mp4?a=1&b=2"]);
+        let gallery = r#"<img src="https://preview.redd.it/icon-v0-zz1.png"><gallery-carousel><img src="https://preview.redd.it/t-v0-b2.jpeg?width=640"><img srcset="https://preview.redd.it/t-v0-a1.jpeg?width=108 108w"><img src="https://preview.redd.it/t-v0-b2.jpeg?width=1080"></gallery-carousel>"#;
+        assert_eq!(reddit_media(gallery), ["https://i.redd.it/b2.jpeg", "https://i.redd.it/a1.jpeg"]);
+        // A crosspost links to the post it shares, and a feed to its post with the subreddit.
+        let crosspost = r#"<a href="https://www.reddit.com/r/pics/comments/1xapc2a/porto/"></a><div data="{&quot;url&quot;:&quot;https://www.reddit.com/gallery/1x9anef&quot;}">"#;
+        assert_eq!(reddit_links(crosspost).find(|(_, id)| *id != "1xapc2a"), Some((None, "1x9anef")));
+        assert_eq!(reddit_links(r#"<link href="https://www.reddit.com/r/portugal/comments/1x9anef/protestos/phl66l4/"/>"#).next(), Some((Some("portugal"), "1x9anef")));
     }
 }
