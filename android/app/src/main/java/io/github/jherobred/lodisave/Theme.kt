@@ -7,6 +7,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -32,6 +33,9 @@ val Light = Tokens(
 )
 
 val LocalTokens = staticCompositionLocalOf { Dark }
+
+/** Whether things move: the Motion setting, off too while a game is in front (gaming mode). */
+val LocalMotion = compositionLocalOf { true }
 
 val Geist = FontFamily(
     Font(R.font.geist_regular, FontWeight.Normal),
