@@ -288,9 +288,9 @@ fun AccountsSheet(copy: Copy, onDismiss: () -> Unit) {
 
 /** A "Sign in to <site>" button for a save that needed a login, which saves again once you're in. */
 @Composable
-fun SignInPill(copy: Copy, link: String, onSignedIn: () -> Unit) {
+fun SignInPill(copy: Copy, link: String, modifier: Modifier = Modifier, onSignedIn: () -> Unit) {
     val ctx = LocalContext.current
     val site = Site.of(link) ?: return
     val signIn = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { if (it.resultCode == android.app.Activity.RESULT_OK) onSignedIn() }
-    Pill(copy.signInTo(site.label), { signIn.launch(SignInActivity.intent(ctx, site)) })
+    Pill(copy.signInTo(site.label), { signIn.launch(SignInActivity.intent(ctx, site)) }, modifier)
 }

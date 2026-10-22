@@ -11,7 +11,11 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.ImageView
 import android.widget.VideoView
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
@@ -61,6 +65,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -119,7 +124,12 @@ private val Glass = Color.White.copy(alpha = 0.14f)
  * save shows, for that grid to have it in view.
  */
 @Composable
-fun Viewer(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: String, all: Map<Long, Saved>, albums: List<String>, onSeen: (Long) -> Unit, onBack: () -> Unit) {
+fun Viewer(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: String, all: Map<Long, Saved>, albums: List<String>, onSeen: (Long) -> Unit, onBack: () -> Unit) =
+    // Dark in either theme, as photos look best on black, with its menus, sheets and editors.
+    CompositionLocalProvider(LocalTokens provides Dark) { Shown(copy, start, at, trash, from, all, albums, onSeen, onBack) }
+
+@Composable
+private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: String, all: Map<Long, Saved>, albums: List<String>, onSeen: (Long) -> Unit, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val t = LocalTokens.current
     val motion = LocalMotion.current
@@ -142,12 +152,19 @@ fun Viewer(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: String,
     // Video and GIFs start once the thumbnail has grown into place, and stop as it flies back.
     val screen = LocalScreen.current?.transition
     val settled = screen == null || screen.currentState == EnterExitState.Visible && screen.targetState == EnterExitState.Visible
+    // Light status and navigation bars over the black viewer, in a light theme too, and the app's own after.
+    val activity = LocalActivity.current as? ComponentActivity
+    DisposableEffect(activity) {
+        activity?.enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
+        onDispose { activity?.enableEdgeToEdge() }
+    }
     LaunchedEffect(item?.id) { item?.let { onSeen(it.id) } }
     // Everything here went to the trash or away: back to where it came from.
     LaunchedEffect(items.isEmpty()) { if (items.isEmpty()) onBack() }
     LaunchedEffect(items.size, show) {
         val at = items.indexOfFirst { it.id == show }
-        if (at >= 0) { show = null; pager.animateScrollToPage(at) }
+        // Cleared after the turn: `show` is a key here, and clearing it first would cancel the turn.
+        if (at >= 0) { pager.animateScrollToPage(at); show = null }
     }
     BackHandler(editing != null) { editing = null }
     fun done(message: String, undo: (suspend () -> Unit)? = null) = scope.launch {
@@ -307,14 +324,21 @@ private fun Photo(item: Saved, hero: String, onTap: () -> Unit) {
             .pointerInput(item.id) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
+                    // Kept here, as events can come faster than the photo redraws.
+                    var s = zoom.value
+                    var o = pan.value
                     do {
                         val event = awaitPointerEvent()
                         // Two fingers zoom; one finger pans a zoomed photo and leaves the page swipe alone at 1x.
-                        if (event.changes.count { it.pressed } > 1 || zoom.value > 1.01f) {
-                            val s = (zoom.value * event.calculateZoom()).coerceIn(1f, 5f)
-                            val o = limit(pan.value + event.calculatePan(), s)
-                            scope.launch { zoom.snapTo(s); pan.snapTo(o) }
-                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                        val pinch = event.changes.count { it.pressed } > 1
+                        if (pinch || s > 1.01f) {
+                            val before = o
+                            s = (s * event.calculateZoom()).coerceIn(1f, 5f)
+                            o = limit(o + event.calculatePan(), s)
+                            val (toS, toO) = s to o
+                            scope.launch { zoom.snapTo(toS); pan.snapTo(toO) }
+                            // At the photo's edge, a drag goes on to turn the page.
+                            if (pinch || o != before) event.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
                     } while (event.changes.any { it.pressed })
                 }

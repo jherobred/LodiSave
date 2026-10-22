@@ -218,7 +218,7 @@ private fun Sheet(saves: List<UUID>, local: Job?, copy: Copy, motion: Boolean, p
                             }
                             Actions {
                                 if (job is Job.Done && job.uris.isNotEmpty()) Pill(copy.open, { openSaved(ctx, job.uris.first(), job.mimes.firstOrNull().orEmpty()); close() }, Modifier.weight(1f))
-                                if (job is Job.Failed && job.code == "login" && mainId != null) SignInPill(copy, mainLink) { again(mainId, mainLink) }
+                                if (job is Job.Failed && job.code == "login" && mainId != null) SignInPill(copy, mainLink, Modifier.weight(1f)) { again(mainId, mainLink) }
                                 Pill(copy.close, close, if (job is Job.Done || job is Job.Failed && job.code == "login" && Site.of(mainLink) != null) Modifier else Modifier.weight(1f), primary = false)
                             }
                         }

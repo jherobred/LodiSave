@@ -269,6 +269,8 @@ object Saver {
                     val inTrash = if (Build.VERSION.SDK_INT >= 30) row.getInt(11) == 1 else "$id" in binned
                     if (inTrash != trash) continue
                     val mime = row.getString(2).orEmpty()
+                    // A folder, which MediaStore lists too, has no type.
+                    if (mime.isEmpty()) continue
                     val turned = row.getInt(7) % 180 != 0
                     val (w, h) = row.getInt(5) to row.getInt(6)
                     add(Saved(

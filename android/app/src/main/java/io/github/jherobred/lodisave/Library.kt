@@ -458,7 +458,8 @@ private fun Act(glyph: Glyph, label: String, tint: Color = LocalTokens.current.i
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         GlyphIcon(glyph, tint = tint)
-        Text(label, color = if (tint == t.ink) t.muted else tint, fontFamily = Geist, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(label, color = if (tint == t.ink) t.muted else tint, fontFamily = Geist, fontSize = 11.sp, lineHeight = 13.sp, maxLines = 2,
+            overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
     }
 }
 
