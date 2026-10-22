@@ -3,85 +3,277 @@
 <meta charset="utf-8">
 <title>LodiSave</title>
 <link rel="stylesheet" href="app.css">
-<div class="panel" id="panel">
-  <header class="head">
-    <span class="brand">LodiSave</span>
-    <button type="button" class="round" id="open-prefs" data-label="settings">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
-    </button>
-    <button type="button" class="round" id="close" data-label="close">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-    </button>
-  </header>
+<!-- Icons, and Lodi's gradients, which every copy of Lodi shares. Sized 0 rather than hidden, so
+     the gradients keep painting. -->
+<svg class="sprite" aria-hidden="true">
+  <defs>
+    <radialGradient id="g-fur" cx=".38" cy=".3" r=".78"><stop offset="0" stop-color="#F8DDB8"/><stop offset=".55" stop-color="#E8B37A"/><stop offset="1" stop-color="#C98E52"/></radialGradient>
+    <radialGradient id="g-cheek" cx=".4" cy=".35" r=".7"><stop offset="0" stop-color="#FFEFD8"/><stop offset="1" stop-color="#F3CFA3"/></radialGradient>
+    <linearGradient id="g-cream" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFAF2"/><stop offset="1" stop-color="#FBEBD6"/></linearGradient>
+    <radialGradient id="g-paw" cx=".4" cy=".35" r=".75"><stop offset="0" stop-color="#FFEDE3"/><stop offset="1" stop-color="#F5C7AE"/></radialGradient>
+  </defs>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-prefs" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M4 4l16 16M10.4 5.7A9 9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-3 3.7M6.6 6.9C4 8.6 2.5 12 2.5 12S6 18.5 12 18.5c1.8 0 3.3-.5 4.6-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 24 24"><path d="M7 5v14M3.5 15.5L7 19l3.5-3.5M17 19V5M13.5 8.5L17 5l3.5 3.5"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-9.3-9.3A5 5 0 0 1 12 6.4a5 5 0 0 1 9.3 4.3C19.5 15.4 12 20 12 20z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-select" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="5.5"/><path d="M8 12.2l2.8 2.8L16 9.5"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></symbol>
+  <symbol id="i-move" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><path d="M9 13.5h6M12.5 11l2.5 2.5-2.5 2.5"/></symbol>
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5M18 14v3.5a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 4 17.5v-9A2.5 2.5 0 0 1 6.5 6H10"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="3"/><path d="M15.5 8.5V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v5.5a3 3 0 0 0 3 3h1.5"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19.2 8.8a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4.5h6V7"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.8v.1"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M5.5 12h.1M12 12h.1M18.5 12h.1" stroke-width="3.2"/></symbol>
+  <symbol id="i-rotl" viewBox="0 0 24 24"><path d="M4 4.5V10h5.5"/><path d="M5 15a7.5 7.5 0 1 0 1.8-7.8L4 10"/></symbol>
+  <symbol id="i-rotr" viewBox="0 0 24 24"><path d="M20 4.5V10h-5.5"/><path d="M19 15a7.5 7.5 0 1 1-1.8-7.8L20 10"/></symbol>
+  <symbol id="i-fliph" viewBox="0 0 24 24"><path d="M12 3v18M8.5 7.5L3.5 12l5 4.5zM15.5 7.5l5 4.5-5 4.5z"/></symbol>
+  <symbol id="i-flipv" viewBox="0 0 24 24"><path d="M3 12h18M7.5 8.5L12 3.5l4.5 5zM7.5 15.5l4.5 5 4.5-5z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></symbol>
+  <symbol id="i-game" viewBox="0 0 24 24"><path d="M7 7.5h10a4 4 0 0 1 3.9 3.2l.8 4.4a2.5 2.5 0 0 1-4.4 2L15.5 15h-7l-1.8 2.1a2.5 2.5 0 0 1-4.4-2l.8-4.4A4 4 0 0 1 7 7.5z"/><path d="M8.5 10v3M7 11.5h3M15.5 10.8v.1M17 12.4v.1"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.4-3 8-7 9.5-4-1.5-7-5.1-7-9.5V6z"/><path d="M8.8 12.2l2.2 2.2 4.2-4.4"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4L11.5 6M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.5-1.5"/></symbol>
+  <symbol id="i-capture" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></symbol>
+  <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M9 4.5a2 2 0 1 1 4 0V6h3.5A1.5 1.5 0 0 1 18 7.5V11h1.5a2 2 0 1 1 0 4H18v3.5a1.5 1.5 0 0 1-1.5 1.5H13v-1.5a2 2 0 1 0-4 0V20H5.5A1.5 1.5 0 0 1 4 18.5V15h1.5a2 2 0 1 0 0-4H4V7.5A1.5 1.5 0 0 1 5.5 6H9z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></symbol>
+</svg>
 
-  <section class="card" id="card" data-state="idle" aria-live="polite">
-    <div class="who">
-      <svg class="lodi" id="lodi" data-pose="idle" viewBox="0 0 160 160" width="64" height="64" aria-hidden="true">
-        <defs>
-          <radialGradient id="g-fur" cx=".38" cy=".3" r=".78"><stop offset="0" stop-color="#F8DDB8"/><stop offset=".55" stop-color="#E8B37A"/><stop offset="1" stop-color="#C98E52"/></radialGradient>
-          <radialGradient id="g-cheek" cx=".4" cy=".35" r=".7"><stop offset="0" stop-color="#FFEFD8"/><stop offset="1" stop-color="#F3CFA3"/></radialGradient>
-          <linearGradient id="g-cream" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFAF2"/><stop offset="1" stop-color="#FBEBD6"/></linearGradient>
-          <radialGradient id="g-paw" cx=".4" cy=".35" r=".75"><stop offset="0" stop-color="#FFEDE3"/><stop offset="1" stop-color="#F5C7AE"/></radialGradient>
-        </defs>
-        <g data-p="yay">
-          <g transform="translate(20 34)"><path class="leaf" d="M-8 8C-8 -2 -2 -8 8 -8C8 2 2 8 -8 8Z"/></g>
-          <g transform="translate(140 28)"><path class="leaf b" d="M-6 6C-6 -1.5 -1.5 -6 6 -6C6 1.5 1.5 6 -6 6Z"/></g>
-          <g transform="translate(148 96)"><path class="leaf c" d="M-7 7C-7 -1.8 -1.8 -7 7 -7C7 1.8 1.8 7 -7 7Z"/></g>
-        </g>
-        <g class="hop">
-          <g class="bod">
-            <g class="ear l"><circle class="fur" cx="46" cy="44" r="14"/><circle class="pink" cx="47" cy="46" r="7"/></g>
-            <g class="ear r"><circle class="fur" cx="114" cy="44" r="14"/><circle class="pink" cx="113" cy="46" r="7"/></g>
-            <ellipse class="paw" cx="56" cy="139" rx="12" ry="6"/><ellipse class="paw" cx="104" cy="139" rx="12" ry="6"/>
-            <g data-p="yay"><ellipse class="paw up" cx="20" cy="66" rx="9.5" ry="8"/><ellipse class="paw up" cx="140" cy="66" rx="9.5" ry="8"/></g>
-            <path class="fur" d="M80 36C112 36 136 60 138 94C140 122 116 140 80 140C44 140 20 122 22 94C24 60 48 36 80 36Z"/>
-            <ellipse class="gloss" cx="58" cy="56" rx="17" ry="8" transform="rotate(-28 58 56)"/><path class="tuft" d="M74 38Q79 27 87 34"/>
-            <path class="cream" d="M50 112C50 94 63 86 80 86C97 86 110 94 110 112C110 128 97 138 80 138C63 138 50 128 50 112Z"/>
-            <g class="cheek l"><ellipse class="fur2" cx="44" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="44" cy="95" rx="7" ry="4.5"/></g>
-            <g class="cheek r"><ellipse class="fur2" cx="116" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="116" cy="95" rx="7" ry="4.5"/></g>
-            <g data-p="idle" class="blink"><circle class="ink" cx="62" cy="80" r="8.5"/><circle class="ink" cx="98" cy="80" r="8.5"/><circle class="hi" cx="65" cy="76.5" r="3.2"/><circle class="hi" cx="101" cy="76.5" r="3.2"/><circle class="hi" cx="59.5" cy="83.5" r="1.3"/><circle class="hi" cx="95.5" cy="83.5" r="1.3"/></g>
-            <g data-p="grab" transform="translate(0 2.5)"><circle class="ink" cx="62" cy="80" r="8.5"/><circle class="ink" cx="98" cy="80" r="8.5"/><circle class="hi" cx="63.5" cy="79" r="3.2"/><circle class="hi" cx="99.5" cy="79" r="3.2"/></g>
-            <g data-p="full yay"><path class="line" d="M54 82Q62 72.5 70 82"/><path class="line" d="M90 82Q98 72.5 106 82"/></g>
-            <g data-p="oops"><circle class="ink" cx="62" cy="81" r="8"/><circle class="ink" cx="98" cy="81" r="8"/><circle class="hi" cx="64.8" cy="78" r="3"/><circle class="hi" cx="100.8" cy="78" r="3"/><path class="line" d="M53 69L68 65M107 69L92 65"/></g>
-            <path class="nose" d="M75.5 92.5Q80 90 84.5 92.5Q82.5 96.5 80 97Q77.5 96.5 75.5 92.5Z"/>
-            <path data-p="idle" class="line" d="M72.5 100Q76.25 104 80 100.5Q83.75 104 87.5 100"/>
-            <g data-p="grab"><ellipse class="ink" cx="80" cy="103" rx="5" ry="4.5"/><ellipse class="pink" cx="80" cy="105.5" rx="3" ry="1.8"/></g>
-            <path data-p="full" class="line" d="M74.5 100Q77.25 103 80 100.5Q82.75 103 85.5 100"/>
-            <g data-p="yay"><path class="ink" d="M71 100.5Q80 99 89 100.5Q87 112 80 112Q73 112 71 100.5Z"/><ellipse class="pink" cx="80" cy="108" rx="4.2" ry="2.4"/></g>
-            <path data-p="oops" class="line" d="M73 106Q80 99.5 87 106"/>
-            <ellipse class="paw" cx="67" cy="122" rx="9.5" ry="7.5"/><ellipse class="paw" cx="93" cy="122" rx="9.5" ry="7.5"/>
-            <path data-p="oops" class="sweat" d="M136 44C136 44 129 53 129 57C129 61 132.5 63.5 136 63.5C139.5 63.5 143 61 143 57C143 53 136 44 136 44Z"/>
+<div class="panel" id="panel">
+  <main class="view" id="home">
+    <header class="head">
+      <span class="brand">LodiSave</span>
+      <span class="badge" id="gaming" hidden><svg class="i"><use href="#i-game"/></svg><span data-t="gaming"></span></span>
+      <button type="button" class="round" id="open-prefs" data-label="settings"><svg class="i"><use href="#i-prefs"/></svg></button>
+      <button type="button" class="round" id="close" data-label="close"><svg class="i"><use href="#i-close"/></svg></button>
+    </header>
+
+    <section class="card" id="card" data-state="idle" aria-live="polite">
+      <div class="who">
+        <svg class="lodi" id="lodi" data-pose="idle" viewBox="0 0 160 160" width="64" height="64" aria-hidden="true">
+          <g data-p="yay">
+            <g transform="translate(20 34)"><path class="leaf" d="M-8 8C-8 -2 -2 -8 8 -8C8 2 2 8 -8 8Z"/></g>
+            <g transform="translate(140 28)"><path class="leaf b" d="M-6 6C-6 -1.5 -1.5 -6 6 -6C6 1.5 1.5 6 -6 6Z"/></g>
+            <g transform="translate(148 96)"><path class="leaf c" d="M-7 7C-7 -1.8 -1.8 -7 7 -7C7 1.8 1.8 7 -7 7Z"/></g>
           </g>
-        </g>
-      </svg>
-      <div class="what">
-        <h1 id="card-title"></h1>
-        <p id="card-sub"></p>
+          <g class="hop">
+            <g class="bod">
+              <g class="ear l"><circle class="fur" cx="46" cy="44" r="14"/><circle class="pink" cx="47" cy="46" r="7"/></g>
+              <g class="ear r"><circle class="fur" cx="114" cy="44" r="14"/><circle class="pink" cx="113" cy="46" r="7"/></g>
+              <ellipse class="paw" cx="56" cy="139" rx="12" ry="6"/><ellipse class="paw" cx="104" cy="139" rx="12" ry="6"/>
+              <g data-p="yay"><ellipse class="paw up" cx="20" cy="66" rx="9.5" ry="8"/><ellipse class="paw up" cx="140" cy="66" rx="9.5" ry="8"/></g>
+              <path class="fur" d="M80 36C112 36 136 60 138 94C140 122 116 140 80 140C44 140 20 122 22 94C24 60 48 36 80 36Z"/>
+              <ellipse class="gloss" cx="58" cy="56" rx="17" ry="8" transform="rotate(-28 58 56)"/><path class="tuft" d="M74 38Q79 27 87 34"/>
+              <path class="cream" d="M50 112C50 94 63 86 80 86C97 86 110 94 110 112C110 128 97 138 80 138C63 138 50 128 50 112Z"/>
+              <g class="cheek l"><ellipse class="fur2" cx="44" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="44" cy="95" rx="7" ry="4.5"/></g>
+              <g class="cheek r"><ellipse class="fur2" cx="116" cy="98" rx="15" ry="13"/><ellipse class="pink" cx="116" cy="95" rx="7" ry="4.5"/></g>
+              <g data-p="idle" class="blink"><circle class="ink" cx="62" cy="80" r="8.5"/><circle class="ink" cx="98" cy="80" r="8.5"/><circle class="hi" cx="65" cy="76.5" r="3.2"/><circle class="hi" cx="101" cy="76.5" r="3.2"/><circle class="hi" cx="59.5" cy="83.5" r="1.3"/><circle class="hi" cx="95.5" cy="83.5" r="1.3"/></g>
+              <g data-p="grab" transform="translate(0 2.5)"><circle class="ink" cx="62" cy="80" r="8.5"/><circle class="ink" cx="98" cy="80" r="8.5"/><circle class="hi" cx="63.5" cy="79" r="3.2"/><circle class="hi" cx="99.5" cy="79" r="3.2"/></g>
+              <g data-p="full yay"><path class="line" d="M54 82Q62 72.5 70 82"/><path class="line" d="M90 82Q98 72.5 106 82"/></g>
+              <g data-p="oops"><circle class="ink" cx="62" cy="81" r="8"/><circle class="ink" cx="98" cy="81" r="8"/><circle class="hi" cx="64.8" cy="78" r="3"/><circle class="hi" cx="100.8" cy="78" r="3"/><path class="line" d="M53 69L68 65M107 69L92 65"/></g>
+              <path class="nose" d="M75.5 92.5Q80 90 84.5 92.5Q82.5 96.5 80 97Q77.5 96.5 75.5 92.5Z"/>
+              <path data-p="idle" class="line" d="M72.5 100Q76.25 104 80 100.5Q83.75 104 87.5 100"/>
+              <g data-p="grab"><ellipse class="ink" cx="80" cy="103" rx="5" ry="4.5"/><ellipse class="pink" cx="80" cy="105.5" rx="3" ry="1.8"/></g>
+              <path data-p="full" class="line" d="M74.5 100Q77.25 103 80 100.5Q82.75 103 85.5 100"/>
+              <g data-p="yay"><path class="ink" d="M71 100.5Q80 99 89 100.5Q87 112 80 112Q73 112 71 100.5Z"/><ellipse class="pink" cx="80" cy="108" rx="4.2" ry="2.4"/></g>
+              <path data-p="oops" class="line" d="M73 106Q80 99.5 87 106"/>
+              <ellipse class="paw" cx="67" cy="122" rx="9.5" ry="7.5"/><ellipse class="paw" cx="93" cy="122" rx="9.5" ry="7.5"/>
+              <path data-p="oops" class="sweat" d="M136 44C136 44 129 53 129 57C129 61 132.5 63.5 136 63.5C139.5 63.5 143 61 143 57C143 53 136 44 136 44Z"/>
+            </g>
+          </g>
+        </svg>
+        <div class="what">
+          <h1 id="card-title"></h1>
+          <p id="card-sub"></p>
+        </div>
+      </div>
+      <form class="paste" id="paste">
+        <input id="link" type="url" autocomplete="off" spellcheck="false" data-hint="paste">
+      </form>
+      <div class="meter" id="meter"><span id="meter-fill"></span></div>
+      <div class="actions">
+        <button type="button" class="primary" id="go"></button>
+        <button type="button" class="ghost" id="later"></button>
+      </div>
+    </section>
+
+    <div class="recent-head">
+      <h2 data-t="recent"></h2>
+      <button type="button" class="tiny" id="eye"><svg class="i"><use href="#i-eye"/></svg></button>
+      <button type="button" class="tiny" id="folder" data-label="folder"><svg class="i"><use href="#i-folder"/></svg></button>
+      <span class="grow"></span>
+      <button type="button" class="link" id="see-all" data-t="seeAll"></button>
+    </div>
+    <div class="recent" id="recent"></div>
+
+    <footer class="foot">
+      <button type="button" class="chip" id="capture"><svg class="i"><use href="#i-capture"/></svg><span data-t="capture"></span></button>
+      <span class="keys" id="keys" hidden><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>L</kbd></span>
+    </footer>
+  </main>
+
+  <section class="view" id="library" hidden>
+    <header class="bar">
+      <button type="button" class="round" id="lib-back" data-label="back"><svg class="i"><use href="#i-back"/></svg></button>
+      <button type="button" class="title-btn" id="album-pick"><span id="album-name"></span><svg class="i"><use href="#i-down"/></svg></button>
+      <span class="picked" id="picked"></span>
+      <button type="button" class="pill" id="select-all" data-t="selectAll"></button>
+      <button type="button" class="round" id="select" data-label="select"><svg class="i"><use href="#i-select"/></svg></button>
+    </header>
+    <div class="tools">
+      <label class="search"><svg class="i"><use href="#i-search"/></svg><input id="query" type="search" autocomplete="off" spellcheck="false"></label>
+      <button type="button" class="pill" id="sort" popovertarget="sort-menu"><svg class="i"><use href="#i-sort"/></svg><span id="sort-name"></span></button>
+      <div class="menu" id="sort-menu" popover>
+        <button type="button" data-sort="new" data-t="newest"></button>
+        <button type="button" data-sort="old" data-t="oldest"></button>
+        <button type="button" data-sort="name" data-t="byName"></button>
+        <button type="button" data-sort="size" data-t="bySize"></button>
       </div>
     </div>
-    <form class="paste" id="paste">
-      <input id="link" type="url" autocomplete="off" spellcheck="false" data-hint="paste">
-    </form>
-    <div class="meter" id="meter"><span id="meter-fill"></span></div>
-    <div class="actions">
-      <button type="button" class="primary" id="go"></button>
-      <button type="button" class="ghost" id="later"></button>
+    <div class="chips" id="filters">
+      <button type="button" data-f="all"><span data-t="all"></span><b></b></button>
+      <button type="button" data-f="image"><span data-t="photos"></span><b></b></button>
+      <button type="button" data-f="video"><span data-t="videos"></span><b></b></button>
+      <button type="button" data-f="gif"><span data-t="gifs"></span><b></b></button>
+      <button type="button" data-f="audio"><span data-t="audio"></span><b></b></button>
+      <button type="button" data-f="fav"><svg class="i"><use href="#i-heart"/></svg><span data-t="favs"></span><b></b></button>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="blank" id="blank" hidden><h3 id="blank-title"></h3><p id="blank-sub"></p></div>
+    <footer class="selbar" id="selbar">
+      <button type="button" data-do="move"><svg class="i"><use href="#i-move"/></svg><span data-t="move"></span></button>
+      <button type="button" data-do="fav"><svg class="i"><use href="#i-heart"/></svg><span data-t="favorite"></span></button>
+      <button type="button" data-do="hide" data-label="hideHome"><svg class="i"><use href="#i-eye-off"/></svg><span data-t="hideIt"></span></button>
+      <button type="button" data-do="copy"><svg class="i"><use href="#i-copy"/></svg><span data-t="copy"></span></button>
+      <button type="button" data-do="delete" class="bad"><svg class="i"><use href="#i-trash"/></svg><span data-t="delete"></span></button>
+    </footer>
+  </section>
+
+  <section class="view" id="accounts" hidden>
+    <header class="bar">
+      <button type="button" class="round" id="acc-back" data-label="back"><svg class="i"><use href="#i-back"/></svg></button>
+      <h2 class="bar-title" data-t="accounts"></h2>
+    </header>
+    <div class="scroll">
+      <p class="lead" data-t="accountsSub"></p>
+      <ul class="sites" id="sites"></ul>
+      <section class="safe">
+        <h2><svg class="i"><use href="#i-shield"/></svg><span data-t="safeTitle"></span></h2>
+        <ul id="safe"></ul>
+        <p class="hint" id="safe-use"></p>
+      </section>
     </div>
   </section>
 
-  <div class="recent-head">
-    <h2 data-t="recent"></h2>
-    <button type="button" class="link" id="folder" data-t="folder"></button>
-  </div>
-  <div class="recent" id="recent"></div>
+  <section class="viewer" id="viewer" hidden>
+    <header class="vbar">
+      <button type="button" class="round dark" id="v-back" data-label="back"><svg class="i"><use href="#i-back"/></svg></button>
+      <div class="vtitle"><b id="v-name"></b><span id="v-sub"></span></div>
+      <button type="button" class="round dark" id="v-fav" data-label="favorite"><svg class="i"><use href="#i-heart"/></svg></button>
+      <button type="button" class="round dark" id="v-info" data-label="info"><svg class="i"><use href="#i-info"/></svg></button>
+    </header>
+    <div class="stage" id="stage">
+      <button type="button" class="nav prev" id="v-prev" data-label="prev"><svg class="i"><use href="#i-back"/></svg></button>
+      <button type="button" class="nav next" id="v-next" data-label="next"><svg class="i"><use href="#i-next"/></svg></button>
+    </div>
+    <section class="sheet-in" id="v-about" hidden>
+      <dl id="v-facts"></dl>
+    </section>
+    <div class="tray" id="v-tools">
+      <button type="button" data-v="open"><svg class="i"><use href="#i-open"/></svg><span data-t="open"></span></button>
+      <button type="button" data-v="reveal"><svg class="i"><use href="#i-folder"/></svg><span data-t="inFolder"></span></button>
+      <button type="button" data-v="copy"><svg class="i"><use href="#i-copy"/></svg><span data-t="copy"></span></button>
+      <button type="button" data-v="edit"><svg class="i"><use href="#i-edit"/></svg><span data-t="edit"></span></button>
+      <button type="button" data-v="move"><svg class="i"><use href="#i-move"/></svg><span data-t="move"></span></button>
+      <button type="button" data-v="delete" class="bad"><svg class="i"><use href="#i-trash"/></svg><span data-t="delete"></span></button>
+      <button type="button" data-v="more" popovertarget="v-menu"><svg class="i"><use href="#i-more"/></svg><span data-t="more"></span></button>
+    </div>
+    <div class="menu up" id="v-menu" popover>
+      <button type="button" data-v="rename" data-t="rename"></button>
+      <button type="button" data-v="path" data-t="copyPath"></button>
+      <button type="button" data-v="hide" id="v-hide"></button>
+    </div>
 
-  <footer class="foot">
-    <button type="button" class="chip" id="capture">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3"/></svg>
-      <span data-t="capture"></span>
-    </button>
-    <span class="keys" id="keys" hidden><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>L</kbd></span>
-  </footer>
+    <section class="editor" id="editor" hidden>
+      <div class="crop-row" id="aspects">
+        <button type="button" data-a="0" data-t="free"></button>
+        <button type="button" data-a="1">1:1</button>
+        <button type="button" data-a="0.8">4:5</button>
+        <button type="button" data-a="1.7778">16:9</button>
+      </div>
+      <div class="edit-row">
+        <button type="button" class="round dark" data-e="rotl" data-label="rotateL"><svg class="i"><use href="#i-rotl"/></svg></button>
+        <button type="button" class="round dark" data-e="rotr" data-label="rotateR"><svg class="i"><use href="#i-rotr"/></svg></button>
+        <button type="button" class="round dark" data-e="fliph" data-label="flipH"><svg class="i"><use href="#i-fliph"/></svg></button>
+        <button type="button" class="round dark" data-e="flipv" data-label="flipV"><svg class="i"><use href="#i-flipv"/></svg></button>
+        <span class="seg dark" id="formats"><button type="button" data-x="png">PNG</button><button type="button" data-x="jpg">JPG</button><button type="button" data-x="webp">WebP</button></span>
+      </div>
+      <div class="edit-row">
+        <button type="button" class="ghost dark" id="e-cancel" data-t="cancel"></button>
+        <button type="button" class="primary" id="e-save" data-t="saveCopy"></button>
+      </div>
+    </section>
+
+    <section class="editor" id="vtools" hidden>
+      <p class="hint" id="vt-none" data-t="noFfmpeg"></p>
+      <div id="vt-trim">
+        <div class="range" id="range"><input type="range" id="r-from" min="0" step="0.05"><input type="range" id="r-to" min="0" step="0.05"></div>
+        <p class="times"><span id="t-from"></span><span id="t-to"></span></p>
+      </div>
+      <div class="edit-row">
+        <button type="button" class="ghost dark" id="vt-cancel" data-t="cancel"></button>
+        <button type="button" class="ghost dark" id="vt-gif" data-t="toGif"></button>
+        <button type="button" class="primary" id="vt-go"></button>
+      </div>
+    </section>
+  </section>
+
+  <section class="intro" id="intro" hidden>
+    <button type="button" class="link skip" id="skip" data-t="skip"></button>
+    <div class="step" id="step"></div>
+    <footer class="intro-foot">
+      <button type="button" class="ghost" id="intro-back" data-t="back"></button>
+      <span class="dots" id="dots"><i></i><i></i><i></i><i></i></span>
+      <button type="button" class="primary" id="intro-next"></button>
+    </footer>
+  </section>
+
+  <div class="toast" id="toast" role="status" hidden>
+    <span class="who-mini" id="toast-lodi"></span>
+    <span id="toast-text"></span>
+    <button type="button" class="link" id="toast-undo" data-t="undo"></button>
+  </div>
+
+  <dialog class="sheet" id="albums">
+    <h2 id="albums-title"></h2>
+    <ul class="list" id="album-list"></ul>
+    <form class="ask" id="album-form" hidden>
+      <input id="album-input" autocomplete="off" spellcheck="false" maxlength="120">
+      <button type="submit" class="primary small" data-t="ok"></button>
+    </form>
+    <button type="button" class="ghost wide" id="albums-close" data-t="cancel"></button>
+  </dialog>
+
+  <dialog class="sheet" id="ask">
+    <h2 id="ask-title"></h2>
+    <p class="hint" id="ask-sub"></p>
+    <form class="ask" id="ask-form">
+      <input id="ask-input" autocomplete="off" spellcheck="false" maxlength="120">
+    </form>
+    <div class="actions">
+      <button type="button" class="ghost" id="ask-no" data-t="cancel"></button>
+      <button type="button" class="primary" id="ask-yes" data-t="ok"></button>
+    </div>
+  </dialog>
 
   <dialog class="prefs" id="prefs">
     <h2 data-t="settings"></h2>
@@ -94,6 +286,13 @@
     <p class="row"><span data-t="autostart"></span>
       <span class="seg" data-pref="autostart"><button type="button" data-v="on" data-t="on"></button><button type="button" data-v="off" data-t="off"></button></span>
     </p>
+    <p class="row"><span data-t="recentOnHome"></span>
+      <span class="seg" data-pref="recent"><button type="button" data-v="show" data-t="showIt"></button><button type="button" data-v="hide" data-t="hideIt"></button></span>
+    </p>
+    <p class="row"><span data-t="gaming" data-tip="gamingHint"></span>
+      <span class="seg" data-pref="gaming"><button type="button" data-v="auto" data-t="auto"></button><button type="button" data-v="off" data-t="off"></button></span>
+    </p>
+    <p class="row"><span data-t="accounts"></span><button type="button" class="ghost small" id="open-accounts" data-t="manage"></button></p>
     <div class="ext">
       <p class="row"><span data-t="extension"></span><button type="button" class="ghost small" id="extension" data-t="setup"></button></p>
       <p class="hint" data-t="extensionHint"></p>
@@ -104,9 +303,10 @@
         <li><span data-t="extStep4"></span> <button type="button" class="link" id="copy-dir" data-t="copyDir"></button></li>
       </ol>
     </div>
-    <p class="about"><span id="version"></span> · <button type="button" class="link" id="repo">GitHub</button></p>
+    <p class="about"><span id="version"></span> · <button type="button" class="link" id="repo">GitHub</button><button type="button" class="link" id="intro-again" data-t="introAgain"></button></p>
     <button type="button" class="primary wide" id="close-prefs" data-t="done"></button>
   </dialog>
 </div>
+<script src="copy.js"></script>
 <script src="app.js"></script>
 </html>

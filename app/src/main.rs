@@ -1,18 +1,23 @@
 //! LodiSave for Windows: a tray panel that saves the link or image you copied, captures a screen
-//! area, and lists recent saves. Saves go to Downloads\LodiSave, next to the browser extension's.
+//! area, and keeps a library of saves. Saves go to Downloads\LodiSave, next to the browser
+//! extension's.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accounts;
 mod clip;
+mod game;
+mod library;
 mod links;
 mod mp4;
 
+use library::Store;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
@@ -30,7 +35,10 @@ fn now_ms() -> u64 {
 }
 
 fn save_dir(app: &AppHandle) -> PathBuf {
-    let dir = app.path().download_dir().unwrap_or_else(|_| std::env::temp_dir()).join("LodiSave");
+    // LODISAVE_DIR points LodiSave at another folder, to test without touching real saves.
+    let dir = std::env::var_os("LODISAVE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| app.path().download_dir().unwrap_or_else(|_| std::env::temp_dir()).join("LodiSave"));
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
@@ -47,12 +55,27 @@ pub fn writable(dir: &Path) -> Result<(), String> {
 
 /// Paths the panel hands back must stay inside the save folder.
 fn inside(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
-    let p = Path::new(path).canonicalize().map_err(|e| e.to_string())?;
-    let dir = save_dir(app).canonicalize().map_err(|e| e.to_string())?;
-    if p.starts_with(&dir) { Ok(p) } else { Err("outside".into()) }
+    let dir = save_dir(app);
+    library::within(&dir, path).map(|rel| library::at(&dir, &rel))
+}
+
+/// Several paths from the panel, as paths in the save folder, checked by `inside`'s rule.
+fn rels(app: &AppHandle, paths: &[String]) -> Result<Vec<String>, String> {
+    let dir = save_dir(app);
+    paths.iter().map(|p| library::within(&dir, p)).collect()
+}
+
+/// Files a save just made start unmarked in the library, with the link they came from.
+fn fresh(app: &AppHandle, paths: &[PathBuf], source: Option<&str>) {
+    let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    if let Ok(rels) = rels(app, &paths) {
+        app.state::<Store>().fresh(&rels, source);
+    }
 }
 
 static HIDDEN_AT: AtomicU64 = AtomicU64::new(0);
+/// Counts shows, so a close waiting for its animation knows the panel came back meanwhile.
+static SHOWN: AtomicU64 = AtomicU64::new(0);
 
 /// Above the tray icon at `anchor`, or at the bottom-right of the screen. A peek shows the panel
 /// without taking focus, to report a save that finished in the background.
@@ -79,6 +102,7 @@ fn show_panel(app: &AppHandle, anchor: Option<(i32, i32)>, peek: bool) {
         let _ = win.set_size(PhysicalSize::new(w as u32, h as u32));
         let _ = win.set_position(PhysicalPosition::new(x, y));
     }
+    SHOWN.fetch_add(1, Ordering::SeqCst);
     let _ = win.show();
     if !peek {
         let _ = win.set_focus();
@@ -89,6 +113,33 @@ fn show_panel(app: &AppHandle, anchor: Option<(i32, i32)>, peek: bool) {
 fn hide_panel(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("panel") {
         let _ = win.hide();
+    }
+}
+
+/// Hides the panel once its closing animation has played, unless it is shown again meanwhile.
+fn close_panel(app: &AppHandle) {
+    if !panel_visible(app) {
+        return;
+    }
+    let shown = SHOWN.load(Ordering::SeqCst);
+    let _ = app.emit_to("panel", "panel://closing", ());
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(140));
+        if SHOWN.load(Ordering::SeqCst) == shown {
+            hide_panel(&app);
+        }
+    });
+}
+
+/// A save that finished while the panel was away peeks without taking focus. While gaming it
+/// waits until the game ends.
+static NOTICE: AtomicBool = AtomicBool::new(false);
+fn notice(app: &AppHandle) {
+    if game::on() {
+        NOTICE.store(true, Ordering::SeqCst);
+    } else {
+        show_panel(app, None, true);
     }
 }
 
@@ -116,7 +167,8 @@ fn start_capture(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         if let Some(path) = clip::capture(&save_dir(&app)) {
-            show_panel(&app, None, true);
+            fresh(&app, std::slice::from_ref(&path), None);
+            notice(&app);
             let _ = app.emit("capture://saved", path);
         }
     });
@@ -137,19 +189,29 @@ fn clipboard() -> Clip {
 
 #[tauri::command]
 async fn save_link(app: AppHandle, url: String) -> Result<Vec<PathBuf>, String> {
-    let worker = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || links::save(&worker, &url, &save_dir(&worker), None))
-        .await
-        .map_err(|e| e.to_string())?;
+    let (worker, link) = (app.clone(), url.clone());
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        // The sign-in for the link's site, as a cookies.txt that is deleted when `jar` drops right
+        // after the save, a failed one too.
+        let jar = accounts::jar(&worker, &url);
+        links::save(&worker, &url, &save_dir(&worker), jar.as_ref().map(accounts::Jar::path))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if let Ok(paths) = &result {
+        fresh(&app, paths, Some(&link));
+    }
     if !panel_visible(&app) {
-        show_panel(&app, None, true);
+        notice(&app);
     }
     result
 }
 
 #[tauri::command]
 fn save_clipboard_image(app: AppHandle) -> Result<PathBuf, String> {
-    clip::save_image(&save_dir(&app), "Image")
+    let path = clip::save_image(&save_dir(&app), "Image")?;
+    fresh(&app, std::slice::from_ref(&path), None);
+    Ok(path)
 }
 
 #[tauri::command]
@@ -158,37 +220,153 @@ fn capture(app: AppHandle) {
 }
 
 #[derive(Serialize)]
-struct Recent {
-    path: PathBuf,
-    name: String,
-    kind: &'static str,
-    bytes: u64,
-    age: u64,
+struct Library {
+    items: Vec<library::Item>,
+    albums: Vec<String>,
+    ffmpeg: bool,
+}
+
+/// Every save, for the library and the home page's Recent.
+#[tauri::command]
+fn library(app: AppHandle, store: State<Store>) -> Library {
+    let (items, albums) = library::list(&save_dir(&app), &store);
+    Library { items, albums, ffmpeg: library::ffmpeg() }
+}
+
+/// Marks files as favorites ("fav") or hidden from the home page ("hidden"), or unmarks them.
+#[tauri::command]
+fn mark(app: AppHandle, store: State<Store>, paths: Vec<String>, what: String, on: bool) -> Result<(), String> {
+    let rels = rels(&app, &paths)?;
+    match what.as_str() {
+        "fav" => store.edit(&rels, |m| m.fav = on),
+        "hidden" => store.edit(&rels, |m| m.hidden = on),
+        _ => return Err("what".into()),
+    }
+    Ok(())
 }
 
 #[tauri::command]
-fn recent(app: AppHandle) -> Vec<Recent> {
-    let mut out: Vec<Recent> = std::fs::read_dir(save_dir(&app))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let meta = e.metadata().ok().filter(|m| m.is_file())?;
-            let name = e.file_name().to_string_lossy().into_owned();
-            let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
-            let kind = match ext.as_str() {
-                "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "svg" | "bmp" => "image",
-                "mp4" | "webm" | "mov" | "m4v" | "mkv" => "video",
-                "m4a" | "mp3" | "aac" | "opus" | "weba" | "ogg" => "audio",
-                _ => return None,
-            };
-            let age = meta.modified().ok()?.elapsed().map_or(0, |d| d.as_secs());
-            Some(Recent { path: e.path(), name, kind, bytes: meta.len(), age })
-        })
-        .collect();
-    out.sort_by_key(|r| r.age);
-    out.truncate(6);
-    out
+fn rename(app: AppHandle, store: State<Store>, path: String, name: String) -> Result<PathBuf, String> {
+    let dir = save_dir(&app);
+    let rel = library::within(&dir, &path)?;
+    library::rename(&dir, &store, &rel, &name).map(|r| library::at(&dir, &r))
+}
+
+/// Moves files into an album, or back to the main folder when `album` is empty.
+#[tauri::command]
+fn move_to(app: AppHandle, store: State<Store>, paths: Vec<String>, album: String) -> Result<Vec<PathBuf>, String> {
+    let dir = save_dir(&app);
+    let moved = library::move_to(&dir, &store, &rels(&app, &paths)?, &album)?;
+    Ok(moved.iter().map(|r| library::at(&dir, r)).collect())
+}
+
+#[tauri::command]
+fn create_album(app: AppHandle, name: String) -> Result<String, String> {
+    library::create_album(&save_dir(&app), &name)
+}
+
+#[tauri::command]
+fn rename_album(app: AppHandle, store: State<Store>, old: String, new: String) -> Result<String, String> {
+    library::rename_album(&save_dir(&app), &store, &old, &new)
+}
+
+#[tauri::command]
+fn delete_album(app: AppHandle, store: State<Store>, name: String) -> Result<(), String> {
+    library::delete_album(&save_dir(&app), &store, &name)
+}
+
+/// Sends files to the Recycle Bin.
+#[tauri::command]
+async fn trash(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
+    let files = paths.iter().map(|p| inside(&app, p)).collect::<Result<Vec<_>, _>>()?;
+    if !files.iter().all(|f| f.is_file()) {
+        return Err("gone".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || library::trash(&files)).await.map_err(|e| e.to_string())?
+}
+
+/// Undo for `trash`. The files are gone, so their paths are checked by their parts.
+#[tauri::command]
+async fn restore(app: AppHandle, paths: Vec<String>) -> Result<Vec<PathBuf>, String> {
+    let dir = save_dir(&app);
+    let files = paths.iter().map(|p| library::under(&dir, p).map(|rel| library::at(&dir, &rel))).collect::<Result<Vec<_>, _>>()?;
+    let back = tauri::async_runtime::spawn_blocking(move || library::restore(&files)).await.map_err(|e| e.to_string())?;
+    if back.is_empty() { Err("restore".into()) } else { Ok(back) }
+}
+
+/// Saves an edited photo beside its original. The body is the image, the `path` header the
+/// original's path as a JSON string, and `ext` png, jpg or webp.
+#[tauri::command]
+fn save_edit(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<PathBuf, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("body".into()) };
+    let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let path: String = serde_json::from_str(header("path")).map_err(|_| "path".to_string())?;
+    let out = library::write_copy(&inside(&app, &path)?, header("ext"), bytes)?;
+    fresh(&app, std::slice::from_ref(&out), None);
+    Ok(out)
+}
+
+/// The video tools: "trim", "gif" and "mp4" (of a GIF), through FFmpeg.
+#[tauri::command]
+async fn convert(app: AppHandle, path: String, op: String, from: f64, to: f64) -> Result<PathBuf, String> {
+    let src = inside(&app, &path)?;
+    let out = tauri::async_runtime::spawn_blocking(move || library::convert(&src, &op, from, to)).await.map_err(|e| e.to_string())??;
+    fresh(&app, std::slice::from_ref(&out), None);
+    Ok(out)
+}
+
+/// Where a file came from, when known.
+#[tauri::command]
+fn source(app: AppHandle, store: State<Store>, path: String) -> Result<Option<String>, String> {
+    let dir = save_dir(&app);
+    let rel = library::within(&dir, &path)?;
+    Ok(library::source(&dir, &store, &rel))
+}
+
+/// Puts files on the clipboard, to paste in File Explorer or a chat.
+#[tauri::command]
+fn copy_files(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
+    let files = paths.iter().map(|p| inside(&app, p)).collect::<Result<Vec<_>, _>>()?;
+    arboard::Clipboard::new().and_then(|mut c| c.set().file_list(&files)).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+struct Account {
+    id: &'static str,
+    name: &'static str,
+    signed: bool,
+}
+
+fn account(app: &AppHandle, site: &accounts::Site) -> Account {
+    Account { id: site.id, name: site.name, signed: accounts::signed_in(app, site) }
+}
+
+#[tauri::command]
+fn accounts(app: AppHandle) -> Vec<Account> {
+    accounts::SITES.iter().map(|s| account(&app, s)).collect()
+}
+
+/// The site a link would need a sign-in for, when LodiSave can sign in there.
+#[tauri::command]
+fn account_for(app: AppHandle, url: String) -> Option<Account> {
+    accounts::site_of(&url).map(|s| account(&app, s))
+}
+
+/// Async, so it runs off the main thread: building a window there would wait on itself.
+#[tauri::command]
+async fn sign_in(app: AppHandle, site: String, lang: String) -> Result<(), String> {
+    accounts::sign_in(&app, &site, &lang)
+}
+
+#[tauri::command]
+async fn sign_out(app: AppHandle, site: String) -> Result<(), String> {
+    accounts::sign_out(&app, &site)
+}
+
+/// Gaming mode Auto or Off, from the panel's settings.
+#[tauri::command]
+fn set_gaming(auto: bool) {
+    game::set_auto(auto);
 }
 
 #[tauri::command]
@@ -303,6 +481,7 @@ struct Info {
     version: String,
     autostart: bool,
     shortcut: bool,
+    gaming: bool,
 }
 
 #[tauri::command]
@@ -311,6 +490,7 @@ fn info(app: AppHandle) -> Info {
         version: app.package_info().version.to_string(),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         shortcut: app.global_shortcut().is_registered(SHORTCUT),
+        gaming: game::on(),
     }
 }
 
@@ -322,7 +502,7 @@ fn set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
 
 #[tauri::command]
 fn hide(app: AppHandle) {
-    hide_panel(&app);
+    close_panel(&app);
 }
 
 fn create_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -385,6 +565,12 @@ fn main() {
             }
             let handle = app.handle().clone();
             create_tray(&handle)?;
+            let store = Store::open(handle.path().app_local_data_dir()?.join("library.json"));
+            store.prune(&save_dir(&handle));
+            app.manage(store);
+            accounts::sweep(&handle);
+            // For LODISAVE_DIR. The config's scope covers Downloads\LodiSave already.
+            let _ = app.asset_protocol_scope().allow_directory(save_dir(&handle), true);
             let panel = WebviewWindowBuilder::new(app, "panel", WebviewUrl::App("index.html".into()))
                 .title("LodiSave")
                 .inner_size(W, H)
@@ -400,13 +586,30 @@ fn main() {
             panel.on_window_event(move |e| {
                 if let WindowEvent::Focused(false) = e && !SETUP.load(Ordering::SeqCst) {
                     HIDDEN_AT.store(now_ms(), Ordering::SeqCst);
-                    hide_panel(&blur);
+                    close_panel(&blur);
                 }
             });
             // Another app may own the shortcut. The panel then shows no shortcut hint.
             let _ = handle.global_shortcut().register(SHORTCUT);
+            let gamer = handle.clone();
+            game::watch(move |on| {
+                if let Some(tray) = gamer.tray_by_id("main") {
+                    let _ = tray.set_tooltip(Some(if on { "LodiSave · Gaming mode" } else { "LodiSave" }));
+                }
+                let _ = gamer.emit("gaming://changed", on);
+                if !on && NOTICE.swap(false, Ordering::SeqCst) {
+                    show_panel(&gamer, None, true);
+                }
+            });
             let update = handle.clone();
-            std::thread::spawn(move || links::update_ytdlp(&update));
+            std::thread::spawn(move || {
+                // The weekly update waits out a game, once the first gaming check has had a look.
+                std::thread::sleep(Duration::from_secs(5));
+                while game::on() {
+                    std::thread::sleep(Duration::from_secs(30));
+                }
+                links::update_ytdlp(&update);
+            });
             on_launch(&handle, &args);
             Ok(())
         })
@@ -415,7 +618,24 @@ fn main() {
             save_link,
             save_clipboard_image,
             capture,
-            recent,
+            library,
+            mark,
+            rename,
+            move_to,
+            create_album,
+            rename_album,
+            delete_album,
+            trash,
+            restore,
+            save_edit,
+            convert,
+            source,
+            copy_files,
+            accounts,
+            account_for,
+            sign_in,
+            sign_out,
+            set_gaming,
             open_path,
             reveal,
             open_folder,
