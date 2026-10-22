@@ -14,7 +14,6 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import com.chaquo.python.Kwarg
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import kotlinx.coroutines.Dispatchers
@@ -115,10 +114,9 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             val qjs = File(ctx.applicationInfo.nativeLibraryDir, "libqjs.so").path
             // Your sign-in to the link's site, from Accounts, for this save only. Not signed in: none.
             cookies = Site.cookieFile(ctx, url, "$id")
-            val signIn = listOfNotNull(cookies?.let { Kwarg("cookies", it.path) }).toTypedArray()
             fun answer(r: Any): JSONObject = JSONObject(r.toString()).also { if (it.has("error")) throw Failure(it.getString("error")) }
-            fun run(format: String?, items: String?) = answer(lodi.callAttr("save", url, dir.path, zip.path, sink, format, qjs, items, File(thumbs, "$id").path, *signIn))
-            val r = if (inputData.getBoolean(KEY_FILE, false)) answer(lodi.callAttr("save_file", url, dir.path, sink, inputData.getString(KEY_PAGE), *signIn))
+            fun run(format: String?, items: String?) = answer(lodi.callAttr("save", url, dir.path, zip.path, sink, format, qjs, items, File(thumbs, "$id").path, cookies?.path))
+            val r = if (inputData.getBoolean(KEY_FILE, false)) answer(lodi.callAttr("save_file", url, dir.path, sink, inputData.getString(KEY_PAGE), cookies?.path))
             else run(null, pick)
             r.optJSONArray("choose")?.let { choose ->
                 val items = List(choose.length()) { choose.getJSONObject(it) }
