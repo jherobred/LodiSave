@@ -654,7 +654,8 @@ fn unbase64(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// JSON from the API Instagram's website uses, which answers only a signed-in user.
+/// JSON from the API Instagram's website uses, which answers only a signed-in user. To a sign-in it
+/// no longer takes, it answers 401 or, for a profile, 429.
 fn ig_api(path: &str) -> Result<Value, String> {
     let mut c = curl(&["-w", "\n%{http_code} %{url_effective}"]);
     for h in IG_API {
@@ -665,11 +666,10 @@ fn ig_api(path: &str) -> Result<Value, String> {
     let (body, tail) = text.rsplit_once('\n').unwrap_or(("", text.as_ref()));
     match tail.split_once(' ').unwrap_or((tail, "")) {
         (_, last) if last.contains("/accounts/login") => Err("login".into()),
-        ("401" | "403", _) => Err("login".into()),
+        ("401" | "403" | "429", _) => Err("login".into()),
         // A login page in place of the JSON.
         ("200", _) => serde_json::from_str(body).map_err(|_| "login".to_string()),
         ("404" | "410", _) => Err("gone".into()),
-        ("429", _) => Err("refused".into()),
         _ => Err("offline".into()),
     }
 }
@@ -695,7 +695,9 @@ fn story_items((user, highlight, only): Story) -> Result<Vec<Item>, String> {
     let pk = |m: &Value| m["pk"].as_str().map(str::to_string).or_else(|| m["pk"].as_u64().map(|n| n.to_string()));
     let media: Vec<&Value> = found["items"].as_array().into_iter().flatten().filter(|m| only.is_none() || pk(m) == only).collect();
     if media.is_empty() {
-        return Err("gone".into()); // a story lasts a day
+        // A highlight stays, so Instagram showing none means it no longer takes this sign-in. A story
+        // lasts a day.
+        return Err(if highlight.is_some() { "login" } else { "gone" }.into());
     }
     let owner = found["user"]["username"].as_str().or(user.as_deref()).unwrap_or("instagram");
     Ok(named(meta_media(&media), &format!("{owner} {}", only.or(highlight).as_deref().unwrap_or("story"))))
@@ -960,7 +962,20 @@ fn page_items(url: &str) -> Result<Vec<Item>, String> {
 /// Saves a link. `cookies` is the user's sign-in for the link's site, a Netscape cookies.txt file
 /// (the format yt-dlp reads), or None.
 pub fn save(app: &AppHandle, url: &str, dir: &Path, cookies: Option<&Path>) -> Result<Vec<PathBuf>, String> {
-    signed_in(cookies, || save_link(app, url, dir))
+    unsigned_retry(cookies, || save_link(app, url, dir))
+}
+
+/// `run` signed in with `cookies`, then without when that fails, as unsigned_retry in lodi.py: a
+/// sign-in a site no longer takes can make even a public post fail (Instagram's reader breaks on it).
+/// Answers "login" when the post needs one.
+fn unsigned_retry<T>(cookies: Option<&Path>, run: impl Fn() -> Result<T, String>) -> Result<T, String> {
+    match signed_in(cookies, &run) {
+        Err(e) if cookies.is_some() && e != "offline" => match run() {
+            Err(again) if again != "login" => Err(e),
+            again => again,
+        },
+        first => first,
+    }
 }
 
 fn save_link(app: &AppHandle, url: &str, dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -1173,6 +1188,15 @@ mod tests {
             assert!(passes(args(super::base(Path::new("yt-dlp.exe"))), "--cookies"));
         });
         assert!(!args(super::curl(&[])).contains(&"-b".into()) && !args(super::base(Path::new("yt-dlp.exe"))).contains(&"--cookies".into()));
+        // A sign-in the site no longer takes: the save runs again without it, and asks for a new one
+        // when the post needs it.
+        let run = |with: Result<&str, &str>, without: Result<&str, &str>| {
+            super::unsigned_retry(Some(&file), || if super::COOKIES.with_borrow(Option::is_some) { with } else { without }.map(str::to_string).map_err(str::to_string))
+        };
+        assert_eq!(run(Err("broken"), Ok("saved")), Ok("saved".into()));
+        assert_eq!(run(Err("broken"), Err("login")), Err("login".into()));
+        assert_eq!(run(Err("refused"), Err("nothing")), Err("refused".into()));
+        assert_eq!(run(Err("offline"), Ok("saved")), Err("offline".into()));
         // A file that's gone counts as no sign-in.
         std::fs::remove_file(&file).unwrap();
         super::signed_in(Some(&file), || assert!(!args(super::curl(&[])).contains(&"-b".into())));

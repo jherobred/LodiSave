@@ -358,14 +358,15 @@ def threads_gifs(post):
 
 
 def ig_api(path):
-    """JSON from the API Instagram's website uses, which answers only a signed-in user."""
+    """JSON from the API Instagram's website uses, which answers only a signed-in user. To a sign-in it
+    no longer takes, it answers 401 or, for a profile, 429."""
     try:
         with open_url('https://www.instagram.com/api/v1/' + path, desktop=True, headers=IG_API) as r:
             if '/accounts/login' in r.url:
                 raise Failure('login')
             return json.loads(r.read(20_000_000))
     except urllib.error.HTTPError as e:
-        raise Failure('login' if e.code in (401, 403) else http_code(e))
+        raise Failure('login' if e.code in (401, 403, 429) else http_code(e))
     except ValueError:  # a login page in place of the JSON
         raise Failure('login')
     except OSError:
@@ -387,7 +388,9 @@ def story_items(user, highlight=None, only=None):
     found = (ig_api(f'feed/reels_media/?reel_ids={reel}').get('reels') or {}).get(reel) or {}
     media = [m for m in found.get('items') or [] if not only or str(m.get('pk')) == only]
     if not media:
-        raise Failure('gone')  # a story lasts a day
+        # A highlight stays, so Instagram showing none means it no longer takes this sign-in. A story
+        # lasts a day.
+        raise Failure('login' if highlight else 'gone')
     owner = (found.get('user') or {}).get('username') or user or 'instagram'
     return named(media_items(media), f'{owner} {only or highlight or "story"}')
 
@@ -683,11 +686,26 @@ def items_of(yt_dlp, url, base):
 RECENT = {}
 
 
+def unsigned_retry(run, cookies):
+    """run(cookies), then run(None) when that fails: a sign-in a site no longer takes can make even a
+    public post fail (Instagram's reader breaks on it). Answers 'login' when the post needs one."""
+    answer = run(cookies)
+    if cookies and json.loads(answer).get('error') not in (None, 'offline'):
+        again = run(None)
+        if json.loads(again).get('error') in (None, 'login'):
+            return again
+    return answer
+
+
 def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None, pick_items=None, thumbs=None, cookies=None):
     """Saves a link. A post with several photos or videos answers {"choose": [{"kind", "thumb"}]}
     first, with a preview of each written to `thumbs`; save it again with pick_items ("0,2", or "all")
     to save those. Otherwise {"saves": [{"index", "files", "join"?}], "failed": n} or {"error": code}.
     `cookies` signs in to the link's site (see sign_in)."""
+    return unsigned_retry(lambda c: save_signed(url, out_dir, ytdlp_zip, progress, fmt, qjs, pick_items, thumbs, c), cookies)
+
+
+def save_signed(url, out_dir, ytdlp_zip, progress, fmt, qjs, pick_items, thumbs, cookies):
     try:
         sign_in(cookies)
         url = unwrap(url.strip())
@@ -750,6 +768,10 @@ def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None, pick_items=None,
 def save_file(url, out_dir, progress, referer=None, cookies=None):
     """Saves a photo or video file itself, as the picker finds one on a web page, full size where
     the site keeps one. Answers as save() does."""
+    return unsigned_retry(lambda c: save_file_signed(url, out_dir, progress, referer, c), cookies)
+
+
+def save_file_signed(url, out_dir, progress, referer, cookies):
     try:
         sign_in(cookies)
         progress.report('saving', -1.0)
@@ -888,4 +910,11 @@ if __name__ == '__main__':
         assert sent('https://x.com/') is None and sent('https://evilinstagram.com/') is None and sent('http://www.instagram.com/') is None
         sign_in(os.path.join(d, 'missing.txt'))
         assert LOCAL.cookies is None
+    # A sign-in the site no longer takes: the save runs again without it, and asks for a new one when
+    # the post needs it.
+    run = lambda signed, unsigned: lambda c: json.dumps(signed if c else unsigned)
+    assert json.loads(unsigned_retry(run({'error': 'broken'}, {'saves': []}), 'c.txt')) == {'saves': []}
+    assert json.loads(unsigned_retry(run({'error': 'broken'}, {'error': 'login'}), 'c.txt')) == {'error': 'login'}
+    assert json.loads(unsigned_retry(run({'error': 'refused'}, {'error': 'nothing'}), 'c.txt')) == {'error': 'refused'}
+    assert json.loads(unsigned_retry(run({'error': 'offline'}, {'saves': []}), 'c.txt')) == {'error': 'offline'}
     print('lodi.py checks: ok')
