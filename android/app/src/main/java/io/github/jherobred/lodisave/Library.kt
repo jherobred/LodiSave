@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import androidx.activity.compose.BackHandler
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -185,6 +186,7 @@ object Library {
     }
 
     /** Lets a change reach files in the trash too, which MediaStore otherwise leaves out. */
+    @RequiresApi(30)
     private fun trashedToo() = Bundle().apply { putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE) }
 }
 
@@ -242,7 +244,9 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
     val grid = rememberLazyGridState()
     remember(seen) {
         val at = list.indexOfFirst { it.id == seen }
+        // Made to be called while composing: it applies at the grid's next measure, before it draws.
         if (at >= 0 && (at < grid.firstVisibleItemIndex || at > grid.firstVisibleItemIndex + 11)) grid.requestScrollToItem(at)
+        at
     }
     LaunchedEffect(Unit) { delay(700); entered = true }
     BackHandler(picked.isNotEmpty()) { picked = emptyList() }

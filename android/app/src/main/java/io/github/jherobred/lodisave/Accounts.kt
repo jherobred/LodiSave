@@ -3,7 +3,6 @@ package io.github.jherobred.lodisave
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
@@ -53,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -111,7 +111,7 @@ enum class Site(val label: String, val login: String, val hosts: List<String>, p
     companion object {
         /** The site a link belongs to, its short links like fb.watch and redd.it included, or null. */
         fun of(url: String): Site? {
-            val host = runCatching { Uri.parse(url).host }.getOrNull()?.lowercase() ?: return null
+            val host = runCatching { url.toUri().host }.getOrNull()?.lowercase() ?: return null
             return entries.firstOrNull { s -> s.owns(host) || s.links.any { host == it || host.endsWith(".$it") } }
         }
 

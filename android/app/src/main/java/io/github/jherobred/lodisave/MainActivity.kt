@@ -210,7 +210,7 @@ private fun App(clip: String?, focus: Int) {
                         when (screen) {
                             Screen.Home -> saved.SaveableStateProvider("home") {
                                 Home(clip, focus, copy, infos, recent, hideRecent, { hideRecent = it; prefs.hideRecent = it },
-                                    onSettings = { settings = true }, onLibrary = { go(Screen.Library) }, onOpen = { at -> go(Screen.View(recent.map { it.id }, at, false)) })
+                                    onSettings = { settings = true }, onLibrary = { seen = null; go(Screen.Library) }, onOpen = { at -> go(Screen.View(recent.map { it.id }, at, false)) })
                             }
                             Screen.Library -> saved.SaveableStateProvider("library") {
                                 Library(copy, media, bin, seen, onOpen = { ids, at, trash -> go(Screen.View(ids, at, trash)) }, onBack = ::back)

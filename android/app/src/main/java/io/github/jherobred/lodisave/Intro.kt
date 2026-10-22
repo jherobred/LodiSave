@@ -133,7 +133,7 @@ fun Intro(copy: Copy, focus: Int, onDone: () -> Unit) {
                             Step(copy, "", copy.notifications, "", notify, copy.allow) {
                                 // Asked once already and still off: only Android's settings can turn it on now.
                                 if (prefs.askedNotifications) open(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName))
-                                else { prefs.askedNotifications = true; askNotify.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                                else if (Build.VERSION.SDK_INT >= 33) { prefs.askedNotifications = true; askNotify.launch(Manifest.permission.POST_NOTIFICATIONS) }
                             }
                         }
                     }
