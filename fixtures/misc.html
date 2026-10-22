@@ -16,6 +16,7 @@
 <svg width="200" height="150"><image href="media/a.jpg?svgimage" width="200" height="150"/></svg>
 <a href="media/large.jpg?link">Full size</a>
 <video src="media/clip.webm?progressive" poster="media/b.png?poster" width="320" height="180" muted></video>
+<video id="unplayed" poster="media/a.jpg?unplayed" preload="none" width="320" height="180"></video>
 <script>
   document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<img src="media/a.jpg?shadow" width="200">';
   new Image().src = 'media/a.jpg?jsonly';

@@ -65,6 +65,9 @@ const probe = (file) => {
   assert.equal(upgrade('https://i.pinimg.com/75x75_RS/ab/cd/x.jpg'), 'https://i.pinimg.com/originals/ab/cd/x.jpg');
   assert.equal(upgrade('https://i.pinimg.com/originals/ab/cd/ef/abcdef.jpg'), null);
   assert.equal(upgrade('https://example.com/236x/a.jpg'), null);
+  // Reddit's still preview of a GIF post gives way to the GIF itself.
+  assert.equal(upgrade('https://preview.redd.it/genius-pig-escapes-v0-684j617po7bh1.gif?format=png8&s=1'), 'https://i.redd.it/684j617po7bh1.gif');
+  assert.equal(upgrade('https://preview.redd.it/fatco1py8pwh1.jpeg?width=640&crop=smart'), 'https://i.redd.it/fatco1py8pwh1.jpeg');
 
   // G2: the audio playlist that goes with a variant.
   const withAudio = HLS.parse('#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Alt",URI="alt.m3u8"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Main",DEFAULT=YES,URI="main.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=900000,AUDIO="a"\nv.m3u8\n', 'https://cdn.test/x/master.m3u8');
@@ -333,6 +336,16 @@ await check('G4 Full-size URL falls back to the page copy', 'service worker', as
     await shot('saved');
     await popup.close();
     return `${tiles} tiles, Save works from the popup`;
+  });
+  await check('A video\'s poster is not the video', 'context menu', async () => {
+    const click = async (selector) => {
+      await page.locator(selector).scrollIntoViewIfNeeded();
+      return rightClick(page, tabId, selector);
+    };
+    const played = await click('video[src*="progressive"]');
+    const unplayed = await click('#unplayed');
+    if (unplayed.ok || !/Play the video first/.test(unplayed.error || '')) throw new Error(`an unplayed video saved its poster: ${JSON.stringify(unplayed)}`);
+    return `a loaded video saves itself (${same(played, original('clip.webm'))}), an unplayed one asks to be played instead of saving its poster`;
   });
   await page.close();
 }
