@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
@@ -72,6 +72,11 @@ fn show_panel(app: &AppHandle, anchor: Option<(i32, i32)>, peek: bool) {
             Some((_, ay)) if ay < (top + bottom) / 2 => top,
             _ => bottom - h,
         };
+        // Windows makes the window at the system scale, which with a 125% laptop screen and a 100%
+        // monitor is the wrong size for the monitor it shows on, and a hidden window isn't rescaled.
+        // Moved first so any rescale happens, then sized for this monitor, so it fits where it lands.
+        let _ = win.set_position(PhysicalPosition::new(x, y));
+        let _ = win.set_size(PhysicalSize::new(w as u32, h as u32));
         let _ = win.set_position(PhysicalPosition::new(x, y));
     }
     let _ = win.show();
