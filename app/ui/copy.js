@@ -103,7 +103,7 @@ const COPY = {
 
     library: 'Library', back: 'Bumalik', allSaves: 'Lahat ng na-save', loose: 'Wala sa album', albums: 'Mga album', newAlbum: 'Bagong album', albumName: 'Pangalan ng album',
     renameAlbum: 'Palitan ang pangalan', deleteAlbum: 'Burahin ang album', deleteAlbumSub: (n) => `Babalik sa main folder ang mga file sa “${n}”.`,
-    search: 'Hanapin ayon sa pangalan', sortBy: 'Ayusin', newest: 'Pinakabago', oldest: 'Pinakaluma', byName: 'Pangalan', bySize: 'Laki',
+    search: 'Hanapin sa pangalan', sortBy: 'Ayusin', newest: 'Pinakabago', oldest: 'Pinakaluma', byName: 'Pangalan', bySize: 'Laki',
     all: 'Lahat', photos: 'Photos', videos: 'Videos', gifs: 'GIFs', audio: 'Audio', favs: 'Paborito',
     empty: 'Wala pang laman dito', emptySub: 'Dito mapupunta ang mga ise-save mo.', noMatch: 'Walang tumugma', noMatchSub: 'Subukan ang ibang pangalan o filter.',
     emptyAlbum: 'Pumili ng mga na-save sa Lahat ng na-save, tapos Ilipat dito.',

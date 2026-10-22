@@ -155,10 +155,10 @@ h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em }
 @keyframes drip { 0% { transform: translateY(-4px); opacity: 0 } 20% { opacity: 1 } 100% { transform: translateY(12px); opacity: 0 } }
 
 /* Recent */
-.recent-head { display: flex; align-items: center; gap: 6px; margin: 12px 18px 8px 20px }
+.recent-head { display: flex; align-items: center; gap: 2px; margin: 12px 18px 8px 20px; white-space: nowrap }
+.recent-head h2 { margin-right: 4px }
 h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted) }
 .link { padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; font-weight: 600 }
-.recent-head .link + .link { margin-left: 12px }
 .tiny { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); transition: transform .222s var(--snap), background-color .222s var(--snap) }
 .tiny:hover { background: var(--soft); color: var(--ink) }
 .tiny .i { width: 17px; height: 17px }
