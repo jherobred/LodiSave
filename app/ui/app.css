@@ -52,7 +52,8 @@ button:disabled { cursor: default }
 .panel::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: rgba(15, 15, 16, .32); opacity: 0; pointer-events: none; transition: opacity .3s var(--snap) }
 .panel:has(dialog.sheet[open])::after { opacity: 1 }
 
-.view { position: absolute; inset: 0; display: flex; flex-direction: column; view-transition-name: view }
+/* Each view paints its own background, so a page sliding in covers the one under it. */
+.view { position: absolute; inset: 0; display: flex; flex-direction: column; border-radius: 27px; background: var(--surface); view-transition-name: view }
 
 .head { display: flex; align-items: center; gap: 10px; padding: 16px 14px 8px 20px }
 .brand { font-size: 20px; font-weight: 700; letter-spacing: -.03em; margin-right: auto }
@@ -449,23 +450,22 @@ video.media { background: #000 }
 .dots i.on { width: 22px; background: var(--accent) }
 
 /* View Transitions: views slide like pages, kept inside the panel's rounded edge by clipping
-   each image by as much as it has moved; the viewer zooms out of its tile. */
+   each image by as much as it has moved (so the curve must not overshoot); the viewer zooms out
+   of its tile, above everything else. */
 ::view-transition-old(root), ::view-transition-new(root) { animation: none }
-::view-transition-group(view), ::view-transition-group(step) { animation-duration: .5s }
 ::view-transition-image-pair(view), ::view-transition-image-pair(step) { isolation: auto }
-[data-vt="forward"]::view-transition-old(view), [data-vt="forward"]::view-transition-old(step) { animation: out-left .5s var(--drift) both }
-[data-vt="forward"]::view-transition-new(view), [data-vt="forward"]::view-transition-new(step) { animation: in-right .5s var(--drift) both }
-[data-vt="back"]::view-transition-old(view), [data-vt="back"]::view-transition-old(step) { animation: out-right .5s var(--drift) both }
-[data-vt="back"]::view-transition-new(view), [data-vt="back"]::view-transition-new(step) { animation: in-left .5s var(--drift) both }
-@keyframes in-right { from { transform: translateX(100%); clip-path: inset(0 100% 0 0 round 27px) } to { clip-path: inset(0 0 0 0 round 27px) } }
-@keyframes out-left { to { transform: translateX(-30%); clip-path: inset(0 0 0 30% round 27px); opacity: .5 } }
-@keyframes in-left { from { transform: translateX(-30%); clip-path: inset(0 0 0 30% round 27px); opacity: .5 } }
-@keyframes out-right { to { transform: translateX(100%); clip-path: inset(0 100% 0 0 round 27px) } }
+[data-vt="forward"]::view-transition-old(view), [data-vt="forward"]::view-transition-old(step) { animation: out-left .44s var(--snap) both }
+[data-vt="forward"]::view-transition-new(view), [data-vt="forward"]::view-transition-new(step) { animation: in-right .44s var(--snap) both }
+[data-vt="back"]::view-transition-old(view), [data-vt="back"]::view-transition-old(step) { animation: out-right .44s var(--snap) both }
+[data-vt="back"]::view-transition-new(view), [data-vt="back"]::view-transition-new(step) { animation: in-left .44s var(--snap) both }
+@keyframes in-right { from { transform: translateX(100%); clip-path: inset(0 100% 0 0 round 27px) } to { transform: none; clip-path: inset(0 0 0 0 round 27px) } }
+@keyframes out-left { from { transform: none; clip-path: inset(0 0 0 0 round 27px) } to { transform: translateX(-30%); clip-path: inset(0 0 0 30% round 27px); opacity: .4 } }
+@keyframes in-left { from { transform: translateX(-30%); clip-path: inset(0 0 0 30% round 27px); opacity: .4 } to { transform: none; clip-path: inset(0 0 0 0 round 27px); opacity: 1 } }
+@keyframes out-right { from { transform: none; clip-path: inset(0 0 0 0 round 27px) } to { transform: translateX(100%); clip-path: inset(0 100% 0 0 round 27px) } }
 [data-vt="zoom"]::view-transition-old(view), [data-vt="zoom"]::view-transition-new(view) { animation: none }
-[data-vt="zoom"]::view-transition-group(hero) { animation-duration: .52s; animation-timing-function: var(--drift) }
-::view-transition-old(hero), ::view-transition-new(hero) { height: 100%; object-fit: cover; overflow: clip; animation-duration: .3s }
+::view-transition-group(hero) { z-index: 2; border-radius: 14px; overflow: clip; animation-duration: .52s; animation-timing-function: var(--drift) }
+::view-transition-old(hero), ::view-transition-new(hero) { height: 100%; object-fit: cover; animation-duration: .3s }
 ::view-transition-group(viewer) { animation-duration: .36s }
-::view-transition-group(hero) { border-radius: 14px; overflow: clip }
 
 /* The sign-in window's sidebar. */
 body.side { height: auto; min-height: 100%; overflow-y: auto; padding: 26px 24px; background: var(--soft); user-select: text }
