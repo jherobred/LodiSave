@@ -115,10 +115,11 @@ private val Glass = Color.White.copy(alpha = 0.14f)
  * One save at a time, full screen: swipe between them, pinch or double-tap to zoom photos, play
  * videos, GIFs and audio, and act on the one showing. Photos and videos open in an editor that
  * saves a copy. `ids` are the saves to page through, looked up in `all`; `trash` pages through the
- * trash. `onSeen` hears which save shows, for the grid to fly it back into its tile.
+ * trash. Thumbnails grow from and fly back to the grid it opened `from`, and `onSeen` hears which
+ * save shows, for that grid to have it in view.
  */
 @Composable
-fun Viewer(copy: Copy, start: List<Long>, at: Int, trash: Boolean, all: Map<Long, Saved>, albums: List<String>, onSeen: (Long) -> Unit, onBack: () -> Unit) {
+fun Viewer(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: String, all: Map<Long, Saved>, albums: List<String>, onSeen: (Long) -> Unit, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val t = LocalTokens.current
     val motion = LocalMotion.current
@@ -159,10 +160,11 @@ fun Viewer(copy: Copy, start: List<Long>, at: Int, trash: Boolean, all: Map<Long
         HorizontalPager(pager, Modifier.fillMaxSize(), pageSpacing = 16.dp, key = { items[it].id }) { page ->
             val shown = items[page]
             val toggle = { chrome = !chrome }
+            val hero = "$from${shown.id}"
             when (shown.kind) {
-                "photo" -> Photo(shown, toggle)
-                "gif" -> Gif(shown, settled, toggle)
-                else -> Player(copy, shown, settled && page == pager.settledPage, chrome, toggle)
+                "photo" -> Photo(shown, hero, toggle)
+                "gif" -> Gif(shown, hero, settled, toggle)
+                else -> Player(copy, shown, hero, settled && page == pager.settledPage, chrome, toggle)
             }
         }
 
@@ -273,7 +275,7 @@ private fun decode(ctx: Context, uri: Uri, max: Int, editable: Boolean = false):
 
 /** A photo that pinches and double-taps to zoom, and pans while zoomed. At 1x a swipe turns the page. */
 @Composable
-private fun Photo(item: Saved, onTap: () -> Unit) {
+private fun Photo(item: Saved, hero: String, onTap: () -> Unit) {
     val ctx = LocalContext.current
     val thumb = rememberThumb(item)
     val full by produceState<ImageBitmap?>(null, item.id) {
@@ -319,7 +321,7 @@ private fun Photo(item: Saved, onTap: () -> Unit) {
             },
         contentAlignment = Alignment.Center,
     ) {
-        Hero("m${item.id}", Modifier.aspectRatio(ratio).graphicsLayer { scaleX = zoom.value; scaleY = zoom.value; translationX = pan.value.x; translationY = pan.value.y }) {
+        Hero(hero, Modifier.aspectRatio(ratio).graphicsLayer { scaleX = zoom.value; scaleY = zoom.value; translationX = pan.value.x; translationY = pan.value.y }) {
             (full ?: thumb)?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
         }
     }
@@ -327,7 +329,7 @@ private fun Photo(item: Saved, onTap: () -> Unit) {
 
 /** A GIF, playing once it's in place. Android draws its frames itself. */
 @Composable
-private fun Gif(item: Saved, settled: Boolean, onTap: () -> Unit) {
+private fun Gif(item: Saved, hero: String, settled: Boolean, onTap: () -> Unit) {
     val ctx = LocalContext.current
     val thumb = rememberThumb(item)
     val drawable by produceState<Drawable?>(null, item.id) {
@@ -335,7 +337,7 @@ private fun Gif(item: Saved, settled: Boolean, onTap: () -> Unit) {
     }
     DisposableEffect(drawable) { onDispose { (drawable as? AnimatedImageDrawable)?.stop() } }
     Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onTap() } }, contentAlignment = Alignment.Center) {
-        Hero("m${item.id}", Modifier.aspectRatio(ratioOf(item, thumb))) {
+        Hero(hero, Modifier.aspectRatio(ratioOf(item, thumb))) {
             thumb?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
             val d = drawable
             if (d != null && settled) AndroidView({ ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_XY } }, Modifier.fillMaxSize()) { v ->
@@ -348,7 +350,7 @@ private fun Gif(item: Saved, settled: Boolean, onTap: () -> Unit) {
 
 /** A video or audio file, playing while it's the page in front, with play, pause and a seek bar. */
 @Composable
-private fun Player(copy: Copy, item: Saved, active: Boolean, chrome: Boolean, onTap: () -> Unit) {
+private fun Player(copy: Copy, item: Saved, hero: String, active: Boolean, chrome: Boolean, onTap: () -> Unit) {
     val t = LocalTokens.current
     val thumb = rememberThumb(item)
     var view by remember { mutableStateOf<VideoView?>(null) }
@@ -365,7 +367,7 @@ private fun Player(copy: Copy, item: Saved, active: Boolean, chrome: Boolean, on
             delay(200)
         }
     }
-    if (!active) drawn = false
+    LaunchedEffect(active) { if (!active) drawn = false }
     val player: @Composable (Modifier) -> Unit = { modifier ->
         if (active) AndroidView(
             { c ->
@@ -380,12 +382,12 @@ private fun Player(copy: Copy, item: Saved, active: Boolean, chrome: Boolean, on
         )
     }
     Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onTap() } }, contentAlignment = Alignment.Center) {
-        if (video) Hero("m${item.id}", Modifier.aspectRatio(ratioOf(item, thumb))) {
+        if (video) Hero(hero, Modifier.aspectRatio(ratioOf(item, thumb))) {
             player(Modifier.fillMaxSize())
             // The thumbnail covers the video until its first frame is drawn.
             if (!drawn) thumb?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
         } else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Hero("m${item.id}", Modifier.size(220.dp), RoundedCornerShape(36.dp)) {
+            Hero(hero, Modifier.size(220.dp), RoundedCornerShape(36.dp)) {
                 Box(Modifier.fillMaxSize().background(t.surface), contentAlignment = Alignment.Center) {
                     thumb?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } ?: GlyphIcon(Glyph.Music, tint = t.muted, size = 72.dp)
                 }
@@ -487,7 +489,7 @@ private fun EditPhoto(copy: Copy, item: Saved, onClose: () -> Unit, onSaved: (Lo
                 }.getOrNull()
             }
             saving = false
-            if (id != null) { Library.each(emptyList()) {}; onSaved(id) } else android.widget.Toast.makeText(ctx, copy.cantEdit, android.widget.Toast.LENGTH_SHORT).show()
+            if (id != null) { Library.changed(); onSaved(id) } else android.widget.Toast.makeText(ctx, copy.cantEdit, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
     Column(Modifier.fillMaxSize().background(t.ground).safeDrawingPadding()) {
@@ -636,7 +638,7 @@ private fun TrimVideo(copy: Copy, item: Saved, onClose: () -> Unit, onSaved: (Lo
                 }
             }
             saving = false
-            if (id != null) { Library.each(emptyList()) {}; onSaved(id) } else android.widget.Toast.makeText(ctx, copy.cantEdit, android.widget.Toast.LENGTH_SHORT).show()
+            if (id != null) { Library.changed(); onSaved(id) } else android.widget.Toast.makeText(ctx, copy.cantEdit, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
     Column(Modifier.fillMaxSize().background(t.ground).safeDrawingPadding()) {

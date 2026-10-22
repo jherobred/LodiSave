@@ -99,6 +99,8 @@ object Library {
     var changes by mutableIntStateOf(0)
         private set
 
+    fun changed() { changes++ }
+
     /** An album name a folder can take. */
     fun clean(name: String) = name.replace(Regex("""[\\/:*?"<>|\n]"""), " ").trim().take(60).trim('.', ' ')
 
@@ -469,7 +471,7 @@ private fun Tile(item: Saved, picking: Boolean, on: Boolean, offHome: Boolean, o
     val pressed = pressScale(press)
     val shrink by animateFloatAsState(if (on && LocalMotion.current) 0.86f else 1f, snap(), label = "picked")
     Enter(order, modifier) {
-        Hero("m${item.id}", Modifier.fillMaxWidth().aspectRatio(1f).graphicsLayer { scaleX = pressed * shrink; scaleY = pressed * shrink }, RoundedCornerShape(if (on) 22.dp else 16.dp)) {
+        Hero("lib${item.id}", Modifier.fillMaxWidth().aspectRatio(1f).graphicsLayer { scaleX = pressed * shrink; scaleY = pressed * shrink }, RoundedCornerShape(if (on) 22.dp else 16.dp)) {
             Box(Modifier.fillMaxSize().background(t.soft).combinedClickable(press, null, onLongClick = onLongClick, onClick = onClick)) {
                 if (thumb != null) Image(thumb, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 else if (item.kind == "audio") GlyphIcon(Glyph.Music, Modifier.align(Alignment.Center), t.muted, 34.dp)

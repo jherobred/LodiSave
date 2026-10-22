@@ -13,13 +13,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -81,13 +82,14 @@ fun Intro(copy: Copy, focus: Int, onDone: () -> Unit) {
                 modifier = Modifier.clip(CircleShape).clickable(onClick = onDone).padding(horizontal = 12.dp, vertical = 10.dp))
         }
         HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth()) { page ->
+            // Centered when it fits, scrolling when it doesn't, as on a small phone.
+            BoxWithConstraints(Modifier.fillMaxSize()) {
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp),
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight).padding(horizontal = 24.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
             ) {
                 when (page) {
                     0 -> {
-                        Spacer(Modifier.height(24.dp))
                         Enter(0) { Lodi(Pose.Yay, Modifier.size(180.dp), LocalMotion.current) }
                         Enter(1) { Title(copy.welcome) }
                         Enter(2) { Sub(copy.welcomeSub) }
@@ -96,8 +98,8 @@ fun Intro(copy: Copy, focus: Int, onDone: () -> Unit) {
                         Enter(0) { Lodi(Pose.Grab, Modifier.size(120.dp), LocalMotion.current) }
                         Enter(1) { Title(copy.ways) }
                         Enter(2) { Way(Glyph.Share, copy.wayShare, copy.wayShareSub) }
-                        Enter(3) { Way(Glyph.Open, copy.wayCopy, copy.wayCopySub) }
-                        Enter(4) { Way(Glyph.Plus, copy.wayLodi, copy.wayLodiSub) }
+                        Enter(3) { Way(Glyph.Link, copy.wayCopy, copy.wayCopySub) }
+                        Enter(4) { Way(null, copy.wayLodi, copy.wayLodiSub) }
                     }
                     2 -> {
                         Enter(0) { Lodi(Pose.Full, Modifier.size(120.dp), LocalMotion.current) }
@@ -125,7 +127,6 @@ fun Intro(copy: Copy, focus: Int, onDone: () -> Unit) {
                         }
                     }
                     3 -> {
-                        Spacer(Modifier.height(24.dp))
                         Enter(0) { Lodi(Pose.Idle, Modifier.size(140.dp), LocalMotion.current) }
                         Enter(1) { Title(copy.notifyTitle) }
                         Enter(2) { Sub(copy.notifySub) }
@@ -138,13 +139,13 @@ fun Intro(copy: Copy, focus: Int, onDone: () -> Unit) {
                         }
                     }
                     else -> {
-                        Spacer(Modifier.height(24.dp))
                         Enter(0) { Lodi(Pose.Yay, Modifier.size(160.dp), LocalMotion.current) }
                         Enter(1) { Title(copy.allSet) }
                         Enter(2) { Sub(copy.allSetSub) }
                         Enter(3) { Note(copy.accountsOptional) }
                     }
                 }
+            }
             }
         }
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -178,11 +179,13 @@ private fun Panel(content: @Composable ColumnScope.() -> Unit) = Column(
     verticalArrangement = Arrangement.spacedBy(10.dp), content = content,
 )
 
-/** One way to save, with a glyph. */
+/** One way to save, with a glyph, or Lodi himself for the floating Lodi. */
 @Composable
-private fun Way(glyph: Glyph, title: String, sub: String) = Panel {
+private fun Way(glyph: Glyph?, title: String, sub: String) = Panel {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Box(Modifier.size(44.dp).clip(CircleShape).background(LocalTokens.current.surface), contentAlignment = Alignment.Center) { GlyphIcon(glyph, tint = LocalTokens.current.accent) }
+        Box(Modifier.size(44.dp).clip(CircleShape).background(LocalTokens.current.surface), contentAlignment = Alignment.Center) {
+            if (glyph != null) GlyphIcon(glyph, tint = LocalTokens.current.accent) else Lodi(Pose.Idle, Modifier.size(36.dp), false)
+        }
         Column(Modifier.weight(1f)) {
             Text(title, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = LocalTokens.current.ink)
             Text(sub, fontFamily = Geist, fontSize = 13.sp, color = LocalTokens.current.muted)
@@ -195,7 +198,7 @@ private fun Way(glyph: Glyph, title: String, sub: String) = Panel {
 private fun Step(copy: Copy, number: String, title: String, sub: String, on: Boolean, action: String = copy.turnOn, onTurnOn: () -> Unit) = Panel {
     val t = LocalTokens.current
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (number.isNotEmpty()) Box(Modifier.size(32.dp).clip(CircleShape).background(if (on) t.ok else t.surface), contentAlignment = Alignment.Center) {
+        if (number.isNotEmpty() || on) Box(Modifier.size(32.dp).clip(CircleShape).background(if (on) t.ok else t.surface), contentAlignment = Alignment.Center) {
             if (on) GlyphIcon(Glyph.Check, tint = t.surface, size = 18.dp)
             else Text(number, fontFamily = GeistMono, fontSize = 14.sp, color = t.ink)
         }

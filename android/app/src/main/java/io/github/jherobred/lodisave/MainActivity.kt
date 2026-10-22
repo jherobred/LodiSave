@@ -54,6 +54,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -126,12 +127,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Where the app is. The viewer pages through `ids` from `at`, or through the trash. */
+/** Where the app is. The viewer pages through `ids` from `at`, or through the trash, and its
+ *  thumbnails fly back to the grid it opened `from`. */
 private sealed interface Screen {
     data object Home : Screen
     data object Library : Screen
     data object Intro : Screen
-    data class View(val ids: List<Long>, val at: Int, val trash: Boolean) : Screen
+    data class View(val ids: List<Long>, val at: Int, val trash: Boolean, val from: String) : Screen
 }
 
 /**
@@ -210,13 +212,13 @@ private fun App(clip: String?, focus: Int) {
                         when (screen) {
                             Screen.Home -> saved.SaveableStateProvider("home") {
                                 Home(clip, focus, copy, infos, recent, hideRecent, { hideRecent = it; prefs.hideRecent = it },
-                                    onSettings = { settings = true }, onLibrary = { seen = null; go(Screen.Library) }, onOpen = { at -> go(Screen.View(recent.map { it.id }, at, false)) })
+                                    onSettings = { settings = true }, onLibrary = { seen = null; go(Screen.Library) }, onOpen = { at -> go(Screen.View(recent.map { it.id }, at, false, "home")) })
                             }
                             Screen.Library -> saved.SaveableStateProvider("library") {
-                                Library(copy, media, bin, seen, onOpen = { ids, at, trash -> go(Screen.View(ids, at, trash)) }, onBack = ::back)
+                                Library(copy, media, bin, seen, onOpen = { ids, at, trash -> go(Screen.View(ids, at, trash, "lib")) }, onBack = ::back)
                             }
                             Screen.Intro -> Intro(copy, focus, ::introDone)
-                            is Screen.View -> Viewer(copy, screen.ids, screen.at, screen.trash, all, albums, onSeen = { seen = it }, onBack = ::back)
+                            is Screen.View -> Viewer(copy, screen.ids, screen.at, screen.trash, screen.from, all, albums, onSeen = { seen = it }, onBack = ::back)
                         }
                     }
                 }
@@ -264,6 +266,9 @@ private fun Home(
     val tray = (started.reversed() + infos.filter { !it.state.isFinished }.map { it.id.toString() }).distinct()
         .filter { it !in hidden && it in byId }
     LaunchedEffect(Unit) { delay(700); entered = true }
+    // A new save lands first: back to the top to show it, where a list would otherwise hold its place.
+    val grid = rememberLazyGridState()
+    LaunchedEffect(recent.firstOrNull()?.id) { if (motion && !hideRecent) grid.animateScrollToItem(0) else grid.scrollToItem(0) }
 
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     fun save(url: String, items: String? = null) {
@@ -361,7 +366,7 @@ private fun Home(
                         }
                     }
                     recent.isEmpty() -> Text(copy.none, color = t.muted, fontFamily = Geist, fontSize = 13.sp)
-                    else -> LazyVerticalGrid(GridCells.Fixed(3), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    else -> LazyVerticalGrid(GridCells.Fixed(3), state = grid, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         itemsIndexed(recent, key = { _, it -> it.id }) { i, item ->
                             RecentItem(item, copy, if (entered) -1 else i + 1, if (motion) Modifier.animateItem() else Modifier.animateItem(null, null, null)) { onOpen(i) }
                         }
@@ -469,7 +474,7 @@ private fun RecentItem(item: Saved, copy: Copy, order: Int, modifier: Modifier, 
             Modifier.graphicsLayer { scaleX = scale; scaleY = scale }.combinedClickable(press, null, onLongClick = { menu = true }, onClick = onOpen),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Hero("m${item.id}", Modifier.fillMaxWidth().aspectRatio(1.2f), RoundedCornerShape(18.dp)) {
+            Hero("home${item.id}", Modifier.fillMaxWidth().aspectRatio(1.2f), RoundedCornerShape(18.dp)) {
                 Box(Modifier.fillMaxSize().background(t.soft), contentAlignment = Alignment.Center) {
                     if (thumb != null) Image(thumb, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     else if (item.kind == "audio") GlyphIcon(Glyph.Music, tint = t.muted, size = 30.dp)
