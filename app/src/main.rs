@@ -138,7 +138,7 @@ fn clipboard() -> Clip {
 #[tauri::command]
 async fn save_link(app: AppHandle, url: String) -> Result<Vec<PathBuf>, String> {
     let worker = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || links::save(&worker, &url, &save_dir(&worker)))
+    let result = tauri::async_runtime::spawn_blocking(move || links::save(&worker, &url, &save_dir(&worker), None))
         .await
         .map_err(|e| e.to_string())?;
     if !panel_visible(&app) {
