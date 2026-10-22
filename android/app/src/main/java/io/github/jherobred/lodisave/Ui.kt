@@ -218,7 +218,8 @@ enum class Glyph(d: String, val fill: Boolean = false) {
     Restore("M4.5 12A7.5 7.5 0 1 0 8.25 5.5M9.35 2.5L8.25 5.5L11.4 6.06"),
     Flip("M12 3V21M9 7L3.5 17H9ZM15 7L20.5 17H15Z"),
     Open("M14 4H20V10M20 4L11 13M18 14V18.5C18 19.3 17.3 20 16.5 20H5.5C4.7 20 4 19.3 4 18.5V7.5C4 6.7 4.7 6 5.5 6H10"),
-    Music("M9 18V5.5L20 3.5V16M9 18A3 3 0 1 1 3 18A3 3 0 1 1 9 18ZM20 16A3 3 0 1 1 14 16A3 3 0 1 1 20 16Z");
+    Music("M9 18V5.5L20 3.5V16M9 18A3 3 0 1 1 3 18A3 3 0 1 1 9 18ZM20 16A3 3 0 1 1 14 16A3 3 0 1 1 20 16Z"),
+    Lock("M7.5 11V8A4.5 4.5 0 0 1 16.5 8V11M5.5 11H18.5V20.5H5.5ZM12 14.5V17");
 
     val path = PathParser().parsePathString(d).toPath()
 }

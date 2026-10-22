@@ -14,6 +14,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.chaquo.python.Kwarg
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import kotlinx.coroutines.Dispatchers
@@ -51,15 +52,17 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
     private fun foreground(phase: String, percent: Double): ForegroundInfo {
         val ctx = applicationContext
         val copy = Copy.of(ctx)
-        ctx.getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(NotificationChannel(CHANNEL, copy.notification, NotificationManager.IMPORTANCE_LOW))
+        // While a game is in front, a channel that stays out of the status bar too, not just silent.
+        val channel = if (Gaming.on) NotificationChannel(QUIET, copy.quiet, NotificationManager.IMPORTANCE_MIN)
+        else NotificationChannel(CHANNEL, copy.notification, NotificationManager.IMPORTANCE_LOW)
+        ctx.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         val text = when (phase) {
             "helper" -> copy.helper
             "joining" -> copy.joining
             "saving" -> copy.saving(percent.toFloat())
             else -> copy.reading
         }
-        val note = NotificationCompat.Builder(ctx, CHANNEL)
+        val note = NotificationCompat.Builder(ctx, channel.id)
             .setSmallIcon(R.drawable.ic_stat_lodi)
             .setContentTitle(copy.notification)
             .setContentText(text)
@@ -100,6 +103,7 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 KEY_FAILED to failed,
             ))
         }
+        var cookies: File? = null
         try {
             if (url.isEmpty()) return@withContext saved(shots, 0)
             val zip = Saver.ytdlp(ctx) { report("helper", -1.0) }
@@ -109,9 +113,12 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             val sink = Sink { phase, percent -> report(phase, percent) }
             // QuickJS ships as a lib*.so so Android unpacks it executable, for YouTube's challenges.
             val qjs = File(ctx.applicationInfo.nativeLibraryDir, "libqjs.so").path
+            // Your sign-in to the link's site, from Accounts, for this save only. Not signed in: none.
+            cookies = Site.cookieFile(ctx, url, "$id")
+            val signIn = listOfNotNull(cookies?.let { Kwarg("cookies", it.path) }).toTypedArray()
             fun answer(r: Any): JSONObject = JSONObject(r.toString()).also { if (it.has("error")) throw Failure(it.getString("error")) }
-            fun run(format: String?, items: String?) = answer(lodi.callAttr("save", url, dir.path, zip.path, sink, format, qjs, items, File(thumbs, "$id").path))
-            val r = if (inputData.getBoolean(KEY_FILE, false)) answer(lodi.callAttr("save_file", url, dir.path, sink, inputData.getString(KEY_PAGE)))
+            fun run(format: String?, items: String?) = answer(lodi.callAttr("save", url, dir.path, zip.path, sink, format, qjs, items, File(thumbs, "$id").path, *signIn))
+            val r = if (inputData.getBoolean(KEY_FILE, false)) answer(lodi.callAttr("save_file", url, dir.path, sink, inputData.getString(KEY_PAGE), *signIn))
             else run(null, pick)
             r.optJSONArray("choose")?.let { choose ->
                 val items = List(choose.length()) { choose.getJSONObject(it) }
@@ -140,6 +147,7 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         } catch (e: Exception) {
             if (shots.isNotEmpty()) saved(shots, 0) else Result.failure(workDataOf(KEY_URL to url, KEY_ERROR to (e.message ?: e.javaClass.simpleName).take(300)))
         } finally {
+            cookies?.delete()
             dir.deleteRecursively()
             shots.forEach { it.parentFile?.deleteRecursively() }
         }
@@ -147,6 +155,7 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
 
     companion object {
         const val CHANNEL = "saving"
+        const val QUIET = "saving-quiet"
         const val TAG = "save"
         const val KEY_URL = "url"
         const val KEY_PICK = "pick"
