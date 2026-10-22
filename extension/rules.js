@@ -28,6 +28,13 @@ var LodiRules = (() => {
       return m ? `https://i.pinimg.com/originals/${m[2]}` : null;
     }
 
+    // Reddit's previews are named after the original: preview.redd.it/<title>-v0-<id>.gif?format=png8 is
+    // a still of i.redd.it/<id>.gif, the GIF itself. As upgrade in the Android app's lodi.py.
+    if (host === 'preview.redd.it') {
+      const m = /^\/(?:[\w-]*-v0-)?(\w+)\.(jpe?g|png|gif|webp)$/.exec(path);
+      return m ? `https://i.redd.it/${m[1]}.${m[2]}` : null;
+    }
+
     return null;
   }
 
