@@ -191,10 +191,10 @@ fn clipboard() -> Clip {
 async fn save_link(app: AppHandle, url: String) -> Result<Vec<PathBuf>, String> {
     let (worker, link) = (app.clone(), url.clone());
     let result = tauri::async_runtime::spawn_blocking(move || {
-        // The sign-in for the link's site, as a cookies.txt deleted when `_jar` drops. links::save
-        // takes `_jar.as_ref().map(accounts::Jar::path)` once the engine branch is merged.
-        let _jar = accounts::jar(&worker, &url);
-        links::save(&worker, &url, &save_dir(&worker))
+        // The sign-in for the link's site, as a cookies.txt that is deleted when `jar` drops right
+        // after the save, a failed one too.
+        let jar = accounts::jar(&worker, &url);
+        links::save(&worker, &url, &save_dir(&worker), jar.as_ref().map(accounts::Jar::path))
     })
     .await
     .map_err(|e| e.to_string())?;

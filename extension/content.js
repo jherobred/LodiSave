@@ -75,6 +75,8 @@
     return out;
   }
 
+  const PLAY = 'Play the video first so LodiSave can capture it.';
+
   // Swaps blob: URLs from the DOM for what the hooks captured behind them, and asks known CDNs for
   // their full-size originals, keeping the shown URL as the fallback.
   function merge(found, withPage) {
@@ -94,7 +96,7 @@
         const b = blobs.get(it.url);
         if (b) { push({ ...it, id: b.id, via: 'blob', mime: b.mime, bytes: b.bytes }); continue }
         // A player's blob: URL with nothing captured behind it yet.
-        if (it.kind !== 'image') { push({ ...it, unsupported: 'Play the video first so LodiSave can capture it.' }); continue }
+        if (it.kind !== 'image') { push({ ...it, unsupported: PLAY }); continue }
       }
       push(it);
     }
@@ -116,7 +118,10 @@
   const rank = (it) => (/^(video|stream|hls|dash)$/.test(it.kind) ? 0 : /^(srcset|picture)$/.test(it.via) ? 1 : 2);
 
   function best(items) {
-    let top = items.filter(usable).sort((a, b) => rank(a) - rank(b))[0];
+    // A poster is only a still of its video: a video that can't be saved yet says so instead.
+    const poster = items.find((it) => it.via === 'poster');
+    let top = items.filter((it) => usable(it) && it.via !== 'poster').sort((a, b) => rank(a) - rank(b))[0];
+    if (!top && poster) return items.find((it) => it.kind === 'video' && it.unsupported) || { ...poster, kind: 'video', unsupported: PLAY };
     if (top?.via === 'mse') {
       // A buffered capture can be partial. One known manifest in the frame is the whole stream, as
       // is a master playlist the others are named after (Pinterest's x.m3u8 and x_720w.m3u8).

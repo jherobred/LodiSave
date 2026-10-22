@@ -114,7 +114,6 @@ fn netscape(kept: &[Kept]) -> String {
 pub struct Jar(PathBuf);
 
 impl Jar {
-    #[allow(dead_code)] // links::save takes it once the engine branch is merged
     pub fn path(&self) -> &Path {
         &self.0
     }
@@ -138,6 +137,10 @@ fn jar_in(dir: &Path, url: &str) -> Option<Jar> {
     let sealed = std::fs::read(dir.join(format!("{}.bin", site.id))).ok()?;
     let kept: Vec<Kept> = serde_json::from_slice(&dpapi(&sealed, false).ok()?).ok()?;
     let jar = Jar(dir.join(format!("jar-{}-{}.txt", std::process::id(), JARS.fetch_add(1, Ordering::SeqCst))));
+    // curl -b reads a value with "=" as cookies, not a file. Windows user names can't hold one.
+    if jar.0.to_string_lossy().contains('=') {
+        return None;
+    }
     std::fs::write(&jar.0, netscape(&kept)).ok()?;
     Some(jar)
 }
