@@ -68,7 +68,8 @@ enum class Site(val label: String, val login: String, val hosts: List<String>, p
     Facebook("Facebook", "https://www.facebook.com/login/", listOf("facebook.com"), listOf("fb.watch", "fb.com", "fb.me"), listOf(listOf("c_user", "xs"))),
     X("X", "https://x.com/i/flow/login", listOf("x.com", "twitter.com"), emptyList(), listOf(listOf("auth_token"))),
     TikTok("TikTok", "https://www.tiktok.com/login", listOf("tiktok.com"), emptyList(), listOf(listOf("sessionid"))),
-    Reddit("Reddit", "https://www.reddit.com/login/", listOf("reddit.com"), listOf("redd.it"), listOf(listOf("reddit_session"), listOf("token_v2")));
+    // Not token_v2: Reddit gives one to signed-out visitors too, so the login page would count as signed in.
+    Reddit("Reddit", "https://www.reddit.com/login/", listOf("reddit.com"), listOf("redd.it"), listOf(listOf("reddit_session")));
 
     /** Whether a web address belongs to this site. */
     fun owns(host: String?) = host != null && hosts.any { host == it || host.endsWith(".$it") }
