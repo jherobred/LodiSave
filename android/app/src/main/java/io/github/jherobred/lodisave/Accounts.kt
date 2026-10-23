@@ -15,11 +15,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -193,15 +189,20 @@ private fun SignIn(site: Site, onDone: () -> Unit, onClose: () -> Unit) {
             }
         }
         if (loading && !done) Meter(-1f, Modifier.padding(horizontal = 16.dp))
-        AnimatedContent(done, Modifier.weight(1f).fillMaxWidth(), transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "signin") { signed ->
-            if (signed) Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Lodi(Pose.Yay, Modifier.size(140.dp), LocalMotion.current)
-                Text(copy.signedInTo(site.label), fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = t.ink)
-            } else AndroidView(
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            // Not inside an animated layer: a WebView draws its page outside of one, or not at all.
+            AndroidView(
                 { c -> signInView(c, site, copy) { loading = it }.also { web = it } },
                 Modifier.fillMaxSize(),
                 onRelease = { it.destroy(); web = null },
             )
+            // Signed in: Lodi cheers over the page before the screen closes.
+            if (done) Enter(0, Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize().background(t.ground), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Lodi(Pose.Yay, Modifier.size(140.dp), LocalMotion.current)
+                    Text(copy.signedInTo(site.label), fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = t.ink)
+                }
+            }
         }
         Column(Modifier.padding(12.dp)) {
             SafetyNote(copy, site.label, note, { note = !note })
@@ -212,6 +213,8 @@ private fun SignIn(site: Site, onDone: () -> Unit, onClose: () -> Unit) {
 /** The WebView for a site's login page, set up so only the site's own page runs in it. */
 @SuppressLint("SetJavaScriptEnabled") // the login page needs its own scripts; LodiSave adds none
 private fun signInView(ctx: Context, site: Site, copy: Copy, onLoading: (Boolean) -> Unit) = WebView(ctx).apply {
+    // Filling its space: a WebView left to wrap its content sizes itself to the whole page and draws blank.
+    layoutParams = android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
     settings.javaScriptEnabled = true
     settings.domStorageEnabled = true
     settings.allowFileAccess = false
