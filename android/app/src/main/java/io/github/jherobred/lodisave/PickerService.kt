@@ -2,10 +2,16 @@ package io.github.jherobred.lodisave
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.view.animation.OvershootInterpolator
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -84,11 +90,14 @@ class PickerService : AccessibilityService() {
 
     override fun onServiceConnected() {
         instance = this
+        watchGames()
     }
 
     override fun onDestroy() {
         stop()
         if (instance === this) instance = null
+        // Without the picker nothing can tell a game is in front.
+        Gaming.set(this, false)
         scope.cancel()
         super.onDestroy()
     }
@@ -96,6 +105,7 @@ class PickerService : AccessibilityService() {
     override fun onInterrupt() = stop()
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) watchGames()
         if (!picking || busy > 0) return
         // LodiSave's own bar and circles change as you pick: only a LodiSave screen being picked from counts.
         if (event.packageName == packageName && rootInActiveWindow?.packageName != packageName) return
@@ -113,7 +123,33 @@ class PickerService : AccessibilityService() {
 
     fun toggle() = if (picking) stop() else start()
 
+    // ----- Gaming mode -----
+
+    private val games = HashMap<String, Boolean>()
+
+    /** Gaming mode is on while a game shows on screen. LodiSave's own windows and the system's, like
+     *  the notification shade or the keyboard, leave it as it was. */
+    private fun watchGames() {
+        val playing = Prefs(this).gaming == "auto" && run {
+            val apps = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+                .mapNotNull { it.root?.packageName?.toString() }.filter { it != packageName }
+            if (apps.isEmpty()) return
+            apps.any(::isGame)
+        }
+        if (playing && picking) stop()
+        Gaming.set(this, playing)
+    }
+
+    /** What the game says of itself: the Games category, or the older isGame flag many still set.
+     *  Seeing other apps' info takes the launcher query in the manifest on Android 11 and up. */
+    @Suppress("DEPRECATION")
+    private fun isGame(pkg: String) = games.getOrPut(pkg) {
+        val info = runCatching { packageManager.getApplicationInfo(pkg, 0) }.getOrNull()
+        info != null && (info.category == ApplicationInfo.CATEGORY_GAME || info.flags and ApplicationInfo.FLAG_IS_GAME != 0)
+    }
+
     private fun start() {
+        if (Gaming.on) return
         picking = true
         // Shots of ticks that were never saved.
         File(cacheDir, "picks").listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 3_600_000 }?.forEach { it.deleteRecursively() }
@@ -128,6 +164,16 @@ class PickerService : AccessibilityService() {
         circles.clear()
         bar?.let { runCatching { wm.removeView(it) } }
         bar = null
+    }
+
+    private val motion get() = Prefs(this).motion
+
+    /** A circle popping in, a beat after the one before it. */
+    private fun pop(v: View, order: Int) {
+        if (!motion) return
+        v.scaleX = 0f
+        v.scaleY = 0f
+        v.animate().scaleX(1f).scaleY(1f).setStartDelay(order * 30L).setDuration(280).setInterpolator(OvershootInterpolator(2.4f)).start()
     }
 
     // ----- Finding photos and videos -----
@@ -192,6 +238,7 @@ class PickerService : AccessibilityService() {
         while (circles.size < media.size) circles += Circle(this).also { c ->
             wm.addView(c.view, c.params)
             c.view.setOnClickListener { c.media?.let(::tap) }
+            pop(c.view, circles.size)
         }
         val size = (40 * dp).toInt()
         val top = statusBarHeight()
@@ -444,7 +491,8 @@ class PickerService : AccessibilityService() {
         stop()
         // Xiaomi phones can keep the card from opening over another app. The saves run either way.
         Toast.makeText(this, copy.savingN(ready.size), Toast.LENGTH_SHORT).show()
-        startActivity(Intent(this, ShareActivity::class.java)
+        // Over a game the card doesn't open on its own: the saves run quietly behind it.
+        if (!Gaming.on) startActivity(Intent(this, ShareActivity::class.java)
             .putExtra(ShareActivity.EXTRA_WORKS, works.map { it.toString() }.toTypedArray())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
@@ -498,6 +546,21 @@ class PickerService : AccessibilityService() {
         wm.addView(row, params)
         bar = row
         updateBar()
+        // The bar slides up from below the screen's edge.
+        if (motion) {
+            val rest = params.y
+            row.alpha = 0f
+            ValueAnimator.ofInt(rest - (140 * dp).toInt(), rest).apply {
+                duration = 380
+                interpolator = OvershootInterpolator(1.1f)
+                addUpdateListener {
+                    if (!row.isAttachedToWindow) return@addUpdateListener
+                    params.y = it.animatedValue as Int
+                    row.alpha = it.animatedFraction.coerceAtMost(1f)
+                    wm.updateViewLayout(row, params)
+                }
+            }.start()
+        }
     }
 
     private fun updateBar() {
@@ -536,7 +599,16 @@ class PickerService : AccessibilityService() {
 
     private class Dot(ctx: Context) : View(ctx) {
         var state: State? = null
-            set(v) { field = v; invalidate() }
+            set(v) {
+                // A tick lands with a little bounce.
+                if (v == State.Ready && field != State.Ready && Prefs(context).motion) {
+                    scaleX = 0.7f
+                    scaleY = 0.7f
+                    animate().scaleX(1f).scaleY(1f).setStartDelay(0).setDuration(240).setInterpolator(OvershootInterpolator(3f)).start()
+                }
+                field = v
+                invalidate()
+            }
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val tick = Path()
         private val ring = RectF()
@@ -617,5 +689,22 @@ class PickerService : AccessibilityService() {
             val me = ComponentName(ctx, PickerService::class.java)
             return on.split(':').any { ComponentName.unflattenFromString(it) == me }
         }
+    }
+}
+
+/**
+ * Gaming mode: a game is in front, as the picker sees it. While it is, the floating Lodi hides,
+ * picking stops, the share card doesn't open on its own, save notifications go quiet and the weekly
+ * yt-dlp refresh waits. Only the picker, an accessibility service, can see which app is in front.
+ */
+object Gaming {
+    var on by mutableStateOf(false)
+        private set
+
+    fun set(ctx: Context, playing: Boolean) {
+        if (on == playing) return
+        on = playing
+        android.util.Log.i("LodiGaming", if (playing) "a game is in front" else "no game in front")
+        BubbleService.hide(playing, Prefs(ctx).motion)
     }
 }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older: backups leave out the WebView's store, where Accounts keeps the sign-in
+     cookies sites give. The rest backs up as before. -->
+<full-backup-content>
+    <exclude domain="root" path="app_webview/" />
+</full-backup-content>

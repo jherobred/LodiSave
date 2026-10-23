@@ -19,6 +19,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.animation.OvershootInterpolator
 import android.widget.ImageView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -135,6 +136,13 @@ class BubbleService : Service() {
         }
         wm.addView(lodi, params)
         shown = lodi
+        if (Gaming.on) hide(true, false)
+        else if (prefs.motion) {
+            // He pops in.
+            lodi.scaleX = 0f
+            lodi.scaleY = 0f
+            lodi.animate().scaleX(1f).scaleY(1f).setDuration(320).setInterpolator(OvershootInterpolator(2.2f)).start()
+        }
     }
 
     override fun onDestroy() {
@@ -152,6 +160,27 @@ class BubbleService : Service() {
         @SuppressLint("StaticFieldLeak")
         var shown: View? = null
             private set
+
+        /** Tucks Lodi away while a game is in front, and brings him back after. Hidden, he lets
+         *  touches through to the game. */
+        fun hide(playing: Boolean, motion: Boolean) {
+            val v = shown ?: return
+            val params = v.layoutParams as? WindowManager.LayoutParams ?: return
+            val wm = v.context.getSystemService(WindowManager::class.java)
+            params.flags = if (playing) params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            runCatching { wm.updateViewLayout(v, params) }
+            v.animate().cancel()
+            if (!motion) {
+                v.visibility = if (playing) View.INVISIBLE else View.VISIBLE
+                v.scaleX = 1f
+                v.scaleY = 1f
+            } else if (playing) {
+                v.animate().scaleX(0f).scaleY(0f).setDuration(180).withEndAction { v.visibility = View.INVISIBLE }.start()
+            } else {
+                v.visibility = View.VISIBLE
+                v.animate().scaleX(1f).scaleY(1f).setDuration(320).setInterpolator(OvershootInterpolator(2.2f)).start()
+            }
+        }
 
         /** Floats Lodi when the setting is on and Android allows drawing over other apps, and hides him otherwise. */
         fun sync(ctx: Context) {

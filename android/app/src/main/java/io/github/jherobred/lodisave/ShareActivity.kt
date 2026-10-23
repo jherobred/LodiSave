@@ -5,7 +5,16 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -20,7 +29,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -59,7 +70,7 @@ class ShareActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         savedInstanceState?.getStringArrayList("saves")?.mapTo(saves, UUID::fromString)
         started = savedInstanceState?.getBoolean("started") == true
-        setContent { LodiTheme { Floating(saves, local.value, ::pick, ::promote, ::finish) } }
+        setContent { LodiTheme { Floating(saves, local.value, ::pick, ::promote, ::again, ::finish) } }
         if (!started && !intent.getBooleanExtra(EXTRA_CLIPBOARD, false)) start()
     }
 
@@ -128,6 +139,13 @@ class ShareActivity : ComponentActivity() {
         saves += SaveWorker.enqueue(this, url)
     }
 
+    /** Saves a link again in place of the save that tried it, as after signing in. */
+    private fun again(id: UUID, url: String) {
+        val at = saves.indexOf(id)
+        val next = SaveWorker.enqueue(this, url)
+        if (at >= 0) saves[at] = next else saves += next
+    }
+
     /** The user picked from a post with several photos or videos: save those in its place. */
     private fun pick(id: UUID, url: String, items: String) {
         val at = saves.indexOf(id)
@@ -148,11 +166,17 @@ class ShareActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Floating(saves: List<UUID>, local: Job?, pick: (UUID, String, String) -> Unit, promote: (UUID) -> Unit, close: () -> Unit) {
+private fun Floating(saves: List<UUID>, local: Job?, pick: (UUID, String, String) -> Unit, promote: (UUID) -> Unit, again: (UUID, String) -> Unit, close: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val copy = remember { Copy.of(ctx) }
+    val motion = remember { Prefs(ctx).motion } && !Gaming.on
+    CompositionLocalProvider(LocalMotion provides motion) { Sheet(saves, local, copy, motion, pick, promote, again, close) }
+}
+
+@Composable
+private fun Sheet(saves: List<UUID>, local: Job?, copy: Copy, motion: Boolean, pick: (UUID, String, String) -> Unit, promote: (UUID) -> Unit, again: (UUID, String) -> Unit, close: () -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val t = LocalTokens.current
-    val copy = remember { Copy.of(ctx) }
-    val motion = remember { Prefs(ctx).motion }
     val infos by remember { WorkManager.getInstance(ctx).getWorkInfosByTagFlow(SaveWorker.TAG) }.collectAsState(emptyList())
     val byId = infos.associateBy { it.id }
     // The newest save is the big one. A shared file or a share with no link stands in when there is no save.
@@ -176,25 +200,39 @@ private fun Floating(saves: List<UUID>, local: Job?, pick: (UUID, String, String
                 Modifier.fillMaxWidth().padding(top = 44.dp).clip(RoundedCornerShape(30.dp)).background(t.surface)
                     .clickable(remember { MutableInteractionSource() }, null) {}.padding(top = 56.dp),
             ) {
-                Card(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
-                    Header(look(main, copy, mainLink), motion, lodi = false)
-                    when (main) {
-                        is Job.Working -> Meter(main.percent)
-                        is Job.Choose -> Picker(main, copy) { items -> mainId?.let { pick(it, main.url, items) } }
-                        else -> {}
-                    }
-                    Actions {
-                        if (main is Job.Done && main.uris.isNotEmpty()) Pill(copy.open, { openSaved(ctx, main.uris.first(), main.mimes.firstOrNull().orEmpty()); close() }, Modifier.weight(1f))
-                        Pill(copy.close, close, if (main is Job.Done) Modifier else Modifier.weight(1f), primary = false)
+                // Over a game, a note that LodiSave is keeping quiet.
+                if (Gaming.on) Tag(copy.gaming, Modifier.align(Alignment.CenterHorizontally).padding(bottom = 8.dp))
+                Card(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp).animateContentSize(spring(0.9f, 400f))) {
+                    // A change of state swaps the card's words and buttons with a quick fade; progress alone just moves the bar.
+                    AnimatedContent(
+                        main, contentKey = { it.javaClass },
+                        transitionSpec = { if (motion) fadeIn(tween(220)) togetherWith fadeOut(tween(120)) else EnterTransition.None togetherWith ExitTransition.None },
+                        label = "card",
+                    ) { job ->
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Header(look(job, copy, mainLink), motion, lodi = false)
+                            when (job) {
+                                is Job.Working -> Meter(job.percent)
+                                is Job.Choose -> Picker(job, copy) { items -> mainId?.let { pick(it, job.url, items) } }
+                                else -> {}
+                            }
+                            Actions {
+                                if (job is Job.Done && job.uris.isNotEmpty()) Pill(copy.open, { openSaved(ctx, job.uris.first(), job.mimes.firstOrNull().orEmpty()); close() }, Modifier.weight(1f))
+                                if (job is Job.Failed && job.code == "login" && mainId != null) SignInPill(copy, mainLink, Modifier.weight(1f)) { again(mainId, mainLink) }
+                                Pill(copy.close, close, if (job is Job.Done || job is Job.Failed && job.code == "login" && Site.of(mainLink) != null) Modifier else Modifier.weight(1f), primary = false)
+                            }
+                        }
                     }
                 }
                 if (others.isNotEmpty()) Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val working = others.count { byId[it].toJob() is Job.Working }
                     if (working > 0) Text(copy.alsoSaving(working), fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = t.muted, modifier = Modifier.padding(start = 4.dp))
-                    for (id in others.take(4)) {
+                    for (id in others.take(4)) key(id) {
                         val job = byId[id].toJob()
-                        TrayRow(job, byId[id]?.link.orEmpty(), copy) {
+                        val link = byId[id]?.link.orEmpty()
+                        TrayRow(job, link, copy) {
                             if (job is Job.Choose) Pill(copy.pick, { promote(id) }, primary = false)
+                            if (job is Job.Failed && job.code == "login") SignInPill(copy, link) { again(id, link) }
                         }
                     }
                 }
