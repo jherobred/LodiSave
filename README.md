@@ -21,10 +21,10 @@ LodiSave is a Windows tray app and a browser extension for Chrome and Edge. Righ
 
 ## Install
 
-1. Download `LodiSave-Setup-0.2.5.exe` from [Releases](https://github.com/jherobred/LodiSave/releases). The builds aren't code-signed yet, so SmartScreen may warn: choose More info, then Run anyway.
-2. For the browser extension, choose Set up extension when Setup finishes, or Settings, then Browser extension, Set up in the tray panel. LodiSave opens a new Chrome, Edge or Brave window with the Extensions address copied, and keeps a checklist on screen: press Ctrl+V and Enter in the address bar, turn on Developer mode, click Load unpacked, then choose Copy folder, press Ctrl+V and Select Folder. Browsers only let apps install extensions from their stores, and they won't open their Extensions page for another app, so these clicks stay yours. The same files are in `LodiSave-extension-0.2.5.zip`.
+1. Download `LodiSave-Setup-0.2.6.exe` from [Releases](https://github.com/jherobred/LodiSave/releases). The builds aren't code-signed yet, so SmartScreen may warn: choose More info, then Run anyway.
+2. For the browser extension, choose Set up extension when Setup finishes, or Settings, then Browser extension, Set up in the tray panel. LodiSave opens a new Chrome, Edge or Brave window with the Extensions address copied, and keeps a checklist on screen: press Ctrl+V and Enter in the address bar, turn on Developer mode, click Load unpacked, then choose Copy folder, press Ctrl+V and Select Folder. Browsers only let apps install extensions from their stores, and they won't open their Extensions page for another app, so these clicks stay yours. The same files are in `LodiSave-extension-0.2.6.zip`.
 
-`LodiSave-0.2.5-portable.exe` runs without installing.
+`LodiSave-0.2.6-portable.exe` runs without installing.
 
 Saves go to `Downloads\LodiSave`. If Windows Security's Controlled folder access protects Downloads, allow LodiSave under Ransomware protection.
 
@@ -42,7 +42,7 @@ The Android app in `android/` saves the same way, without a browser:
 - Saves go to `Pictures/LodiSave`, `Movies/LodiSave` and `Music/LodiSave`, so the gallery shows them.
 - Separate video and audio are joined with Android's own MediaMuxer, so there's no FFmpeg here either.
 
-Install `LodiSave-0.2.5-android.apk` from [Releases](https://github.com/jherobred/LodiSave/releases) (allow installs from your browser or file manager when Android asks). YouTube's challenges run in [QuickJS](https://github.com/quickjs-ng/quickjs), which ships inside the app.
+Install `LodiSave-0.2.6-android.apk` from [Releases](https://github.com/jherobred/LodiSave/releases) (allow installs from your browser or file manager when Android asks). YouTube's challenges run in [QuickJS](https://github.com/quickjs-ng/quickjs), which ships inside the app.
 
 ## Limits
 
