@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LodiSave",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Save the images and videos that sites block you from saving.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxetsVTWLtLWMxnoxhLEpibM01EqGzieajKrahCuIk0vyVI358sPJg5Io7Avr6UN8kVmf1joU1OKa65CQuwxPmXarOJ719PbgXajWKbDNXtD1u46H4amjP34J+QrgSXnpcICfd0gkh/+5KNKid5VkWLSGemN4bLQVgQZNkMKhmxAsgxG7ECRgKTJo4t+mTyhmoQVFUTxNHWzfHEAOenKPI/U1aTcCmgQsASwezCEL/t/kolQ4tZa6o4OBDtaeoX5YKLf8zl82UtXGY74gN3Ah8/7AXB5koWYSOvtlOCulOXr+e8bIrGg3Qj5RpqJ4ZI5HHwCojWiBkzgcgFTbpTxjrQIDAQAB",
   "permissions": ["contextMenus", "downloads", "scripting", "declarativeNetRequestWithHostAccess", "offscreen", "storage", "nativeMessaging"],
