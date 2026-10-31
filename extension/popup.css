@@ -173,3 +173,8 @@ body.empty .primary { display: none }
 .seg button { min-height: 36px; padding: 0 14px; background: none }
 .primary.small { width: 100%; min-height: 44px; font-size: 15px; box-shadow: none }
 .prefs .hint { margin: -4px 0 14px; color: var(--muted); font-size: 12.5px; line-height: 1.4 }
+.seg.four { display: grid; grid-template-columns: 1fr 1fr; margin: -4px 0 12px; border-radius: 24px }
+.folder { display: flex; align-items: center; gap: 10px }
+.folder span { flex: 1; min-width: 0; overflow-wrap: anywhere }
+.ghost { flex: none; min-height: 34px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--ink); font-weight: 600 }
+.ghost[hidden] { display: none }

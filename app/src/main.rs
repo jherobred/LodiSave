@@ -6,6 +6,7 @@
 mod accounts;
 mod clip;
 mod game;
+mod host;
 mod library;
 mod links;
 mod mp4;
@@ -544,6 +545,11 @@ fn on_launch(app: &AppHandle, args: &[String]) {
 }
 
 fn main() {
+    // A browser starting LodiSave for the extension gets the host alone, without the tray app.
+    let args: Vec<String> = std::env::args().collect();
+    if host::launched(&args) {
+        return host::run(&args);
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| on_launch(app, &args)))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--background"])))
@@ -569,6 +575,8 @@ fn main() {
             store.prune(&save_dir(&handle));
             app.manage(store);
             accounts::sweep(&handle);
+            // Each start, so a moved or portable copy is the one browsers start.
+            let _ = host::register(&handle.path().app_local_data_dir()?);
             // For LODISAVE_DIR. The config's scope covers Downloads\LodiSave already.
             let _ = app.asset_protocol_scope().allow_directory(save_dir(&handle), true);
             let panel = WebviewWindowBuilder::new(app, "panel", WebviewUrl::App("index.html".into()))

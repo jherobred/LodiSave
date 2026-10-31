@@ -10,6 +10,15 @@
     <!-- The floating Lodi, over every app, when it's on in Settings. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- The Gallery tab: the phone's photos and videos, once the user allows it. Android 14 and up
+         let the user allow only some of them. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Background sounds play on with the screen off, until the user stops them. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Gaming mode reads the category of the app in front, which Android 11 and up hides unless
          LodiSave says which apps it looks at: the ones in the launcher. -->
@@ -99,6 +108,11 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/picker" />
         </service>
+
+        <service
+            android:name=".SoundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <service
             android:name=".BubbleService"

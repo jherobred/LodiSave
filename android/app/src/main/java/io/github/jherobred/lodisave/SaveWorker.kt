@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.net.Uri
+import android.webkit.WebSettings
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
@@ -114,9 +115,11 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             val qjs = File(ctx.applicationInfo.nativeLibraryDir, "libqjs.so").path
             // Your sign-in to the link's site, from Accounts, for this save only. Not signed in: none.
             cookies = Site.cookieFile(ctx, url, "$id")
+            // The sign-in's own browser: sites like Instagram refuse a sign-in asked for by another.
+            val ua = withContext(Dispatchers.Main) { runCatching { WebSettings.getDefaultUserAgent(ctx) }.getOrNull() }
             fun answer(r: Any): JSONObject = JSONObject(r.toString()).also { if (it.has("error")) throw Failure(it.getString("error")) }
-            fun run(format: String?, items: String?) = answer(lodi.callAttr("save", url, dir.path, zip.path, sink, format, qjs, items, File(thumbs, "$id").path, cookies?.path))
-            val r = if (inputData.getBoolean(KEY_FILE, false)) answer(lodi.callAttr("save_file", url, dir.path, sink, inputData.getString(KEY_PAGE), cookies?.path))
+            fun run(format: String?, items: String?) = answer(lodi.callAttr("save", url, dir.path, zip.path, sink, format, qjs, items, File(thumbs, "$id").path, cookies?.path, ua))
+            val r = if (inputData.getBoolean(KEY_FILE, false)) answer(lodi.callAttr("save_file", url, dir.path, sink, inputData.getString(KEY_PAGE), cookies?.path, inputData.getString(KEY_NAME)))
             else run(null, pick)
             r.optJSONArray("choose")?.let { choose ->
                 val items = List(choose.length()) { choose.getJSONObject(it) }
@@ -169,14 +172,15 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         const val KEY_FILE = "file"
         const val KEY_PAGE = "page"
         const val KEY_SHOTS = "shots"
+        const val KEY_NAME = "name"
 
         /** Saves a link. `pick` names the items of a post to save ("0,2"); without it a post with
          *  several asks which to save. `file` says the link is a photo or video file itself, found on
-         *  the web `page`. `shots` save instead when the link gives nothing, or when there's no link
-         *  (an empty one). Saves run side by side. */
-        fun enqueue(ctx: Context, url: String, pick: String? = null, file: Boolean = false, page: String? = null, shots: List<File> = emptyList()): UUID {
+         *  the web `page`, saved as `name` when given. `shots` save instead when the link gives nothing,
+         *  or when there's no link (an empty one). Saves run side by side. */
+        fun enqueue(ctx: Context, url: String, pick: String? = null, file: Boolean = false, page: String? = null, shots: List<File> = emptyList(), name: String? = null): UUID {
             val request = OneTimeWorkRequestBuilder<SaveWorker>()
-                .setInputData(workDataOf(KEY_URL to url, KEY_PICK to pick, KEY_FILE to file, KEY_PAGE to page, KEY_SHOTS to shots.map(File::getPath).toTypedArray()))
+                .setInputData(workDataOf(KEY_URL to url, KEY_PICK to pick, KEY_FILE to file, KEY_PAGE to page, KEY_SHOTS to shots.map(File::getPath).toTypedArray(), KEY_NAME to name))
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag(TAG)
                 .addTag("url:$url")

@@ -213,17 +213,22 @@ PAGE = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/a
         'Sec-Fetch-Site': 'none', 'Sec-Fetch-User': '?1', 'Upgrade-Insecure-Requests': '1'}
 FILE_TYPES = {**IMAGE_TYPES, 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3'}
 # Share links that redirect to the post, from the apps' Share buttons.
-SHORT = re.compile(r'https?://(?:(?:www|m|web)\.facebook\.com/share/|fb\.watch/|pin\.it/|v[mt]\.tiktok\.com/|t\.co/|'
-                   r'(?:www\.)?instagram\.com/share/|(?:www\.)?threads\.net/|(?:www\.)?reddit\.com/r/\w+/s/)')
+SHORT = re.compile(r'https?://(?:(?:www|m|web)\.facebook\.com/share/|fb\.watch/|pin\.it/|v[mt]\.tiktok\.com/|(?:www\.)?tiktok\.com/t/|t\.co/|'
+                   r'(?:www\.)?instagram\.com/share/|(?:www\.)?threads\.net/|(?:www\.)?reddit\.com/r/\w+/s/|(?:www\.)?snapchat\.com/t/)')
 META_POST = re.compile(r'https?://(?:www\.)?(?:threads\.(?:com|net)/@[\w.]+/post|instagram\.com/(?!stories/)(?:[\w.]+/)?(?:p|reels?|tv))/([\w-]+)')
 # Instagram stories: stories/<user>/, stories/<user>/<id>/ and stories/highlights/<id>/. The app shares a
 # highlight as s/<base64 of "highlight:<id>">?story_media_id=<id>_<user id>.
 IG_STORY = re.compile(r'https?://(?:www\.)?instagram\.com/stories/([\w.]+)(?:/(\d+))?')
 IG_SHARED_STORY = re.compile(r'https?://(?:www\.)?instagram\.com/s/([\w=-]+)(?:\?(?:.*&)?story_media_id=(\d+))?')
 GIPHY = re.compile(r'https://(?:media\d*|i)\.giphy\.com/')
-# What Instagram's website sends to its own API.
+# What Instagram's website sends to its own API. A phone browser's site has its own app id.
 IG_API = {'X-IG-App-ID': '936619743392459', 'X-ASBD-ID': '359341', 'X-IG-WWW-Claim': '0',
           'Origin': 'https://www.instagram.com', 'Accept': '*/*'}
+IG_MOBILE_APP = '1217981644879628'
+# Public Snapchat stories: snapchat.com/add/<user>, /@<user>, story.snapchat.com/s/<user>, a highlight's link.
+SNAP = re.compile(r'https?://(?:www\.|story\.)?snapchat\.com/(?!spotlight/|t/)(?:add/|s/)?@?([\w.-]+)')
+TIKTOK_PHOTO = re.compile(r'https?://(?:www\.)?tiktok\.com/@([\w.-]+)/photo/(\d+)')
+FB_STORY = re.compile(r'https?://(?:(?:www|m|web)\.)?facebook\.com/stories/(\d+)(?:/([\w=-]+))?')
 X_POST = re.compile(r'https?://(?:(?:www|mobile)\.)?(?:x|twitter)\.com/\w+/status(?:es)?/(\d+)')
 REDDIT_POST = re.compile(r'https?://(?:[\w-]+\.)?reddit\.com/(?:r/(\w+)/)?(?:comments|gallery)/(\w+)|https?://redd\.it/(\w+)')
 REDDIT_VIDEO = re.compile(r'https?://v\.redd\.it/(\w+)')
@@ -252,11 +257,17 @@ def sign_in(cookies):
         except (OSError, http.cookiejar.LoadError):
             jar.clear()
     LOCAL.cookies = cookies if len(jar) else None
+    LOCAL.jar = jar
     LOCAL.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 
 
-def open_url(url, referer=None, page=False, desktop=False, headers=None):
-    headers = {'User-Agent': DESKTOP_UA if desktop else UA, **(PAGE if page else {}), **(headers or {})}
+def cookie(name, domain):
+    """The value of a sign-in cookie of `domain`, or None."""
+    return next((c.value for c in getattr(LOCAL, 'jar', None) or [] if c.name == name and c.domain.lstrip('.').endswith(domain)), None)
+
+
+def open_url(url, referer=None, page=False, desktop=False, headers=None, ua=None):
+    headers = {'User-Agent': ua or (DESKTOP_UA if desktop else UA), **(PAGE if page else {}), **(headers or {})}
     if referer:
         headers['Referer'] = referer
     if not getattr(LOCAL, 'opener', None):
@@ -269,10 +280,10 @@ def get(url, referer=None, limit=-1, page=False):
         return r.read(limit), r.headers.get_content_type()
 
 
-def page_of(url):
-    """A page's HTML and final address, as a phone browser gets them."""
+def page_of(url, desktop=False):
+    """A page's HTML and final address, as a phone browser gets them, or a desktop one."""
     try:
-        with open_url(url, page=True) as r:
+        with open_url(url, page=True, desktop=desktop) as r:
             return r.read(8_000_000).decode('utf-8', 'replace'), r.url
     except urllib.error.HTTPError as e:
         raise Failure(http_code(e))
@@ -358,10 +369,18 @@ def threads_gifs(post):
 
 
 def ig_api(path):
-    """JSON from the API Instagram's website uses, which answers only a signed-in user. To a sign-in it
-    no longer takes, it answers 401 or, for a profile, 429."""
+    """JSON from the API Instagram's website uses, which answers only a signed-in user. It's asked the
+    way the browser that signed in asks: with that browser's user agent and app id, and the CSRF token
+    from its cookies. Instagram ties a sign-in to the browser it came from, and refuses a phone's
+    sign-in asked for as a desktop. To a sign-in it no longer takes, it answers 401 or, for a profile,
+    429. Only reading: nothing here marks a story seen, so its owner's viewer list doesn't show you."""
+    ua = getattr(LOCAL, 'ua', None) or DESKTOP_UA
+    headers = {**IG_API, 'X-IG-App-ID': IG_MOBILE_APP if 'Mobile' in ua else IG_API['X-IG-App-ID'], 'X-Requested-With': 'XMLHttpRequest',
+               'Referer': 'https://www.instagram.com/', 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty'}
+    if csrf := cookie('csrftoken', 'instagram.com'):
+        headers['X-CSRFToken'] = csrf
     try:
-        with open_url('https://www.instagram.com/api/v1/' + path, desktop=True, headers=IG_API) as r:
+        with open_url('https://www.instagram.com/api/v1/' + path, headers=headers, ua=ua) as r:
             if '/accounts/login' in r.url:
                 raise Failure('login')
             return json.loads(r.read(20_000_000))
@@ -404,6 +423,180 @@ def shared_story(url):
         return None
     h = re.fullmatch(r'highlight:(\d+)', said)
     return (h.group(1), m.group(2)) if h else None
+
+
+def page_json(page, script_id):
+    """The JSON a page carries in <script id=...>, or {}."""
+    m = re.search(rf'<script id="{script_id}" type="application/json"[^>]*>(.*?)</script>', page, re.S)
+    try:
+        return json.loads(m.group(1)) if m else {}
+    except ValueError:
+        return {}
+
+
+def snap_items(url):
+    """Every snap of a public Snapchat story, from the data its page carries: the story up now, or the
+    highlight a link names. Public stories need no sign-in. None when the page has no story."""
+    page, _ = page_of(url)
+    props = (page_json(page, '__NEXT_DATA__').get('props') or {}).get('pageProps') or {}
+    stories = [props.get('story') or {}, *(props.get('curatedHighlights') or [])]
+    named_id = re.search(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', url)
+    story = next((s for s in stories if named_id and named_id.group(0) == (s.get('highlightId') or {}).get('value')), stories[0])
+    out = [{'kind': 'video' if s.get('snapMediaType') == 1 else 'image', 'src': s['snapUrls']['mediaUrl'],
+            'thumb': ((s['snapUrls'].get('mediaPreviewUrl') or {}).get('value'))}
+           for s in story.get('snapList') or [] if (s.get('snapUrls') or {}).get('mediaUrl')]
+    user = ((props.get('userProfile') or {}).get('publicProfileInfo') or {}).get('username') or 'snapchat'
+    return named(out, f'{user} story') or None
+
+
+def tiktok_photos(url):
+    """The photos of a TikTok photo post or photo story, from the data its page carries: yt-dlp saves
+    only such a post's sound. None when the page doesn't carry it (TikTok sends some networks a check)."""
+    page, _ = page_of(url, desktop=True)
+    scope = page_json(page, '__UNIVERSAL_DATA_FOR_REHYDRATION__').get('__DEFAULT_SCOPE__') or {}
+    item = ((scope.get('webapp.video-detail') or {}).get('itemInfo') or {}).get('itemStruct') or {}
+    out = []
+    for im in (item.get('imagePost') or {}).get('images') or []:
+        urls = (im.get('imageURL') or {}).get('urlList') or []
+        if urls:
+            out.append({'kind': 'image', 'src': urls[0], 'alts': urls[1:], 'thumb': urls[0]})
+    return named(out, f"{(item.get('author') or {}).get('uniqueId') or 'tiktok'} {item.get('id') or ''}") or None
+
+
+def fb_story_items(url, card=None):
+    """The photos and videos of a Facebook story, from the data the story page carries for a signed-in
+    desktop browser. Facebook shows stories only to accounts. `card` picks one story of the person's;
+    without it, all of them. Only reading: nothing marks the story seen. None when the page carries
+    no story media."""
+    if not getattr(LOCAL, 'cookies', None):
+        raise Failure('login')
+    page, final = page_of(url, desktop=True)
+    if '/login' in urllib.parse.urlparse(final).path:
+        raise Failure('login')
+    cards = []
+
+    def media(o, card_id):
+        if isinstance(o, dict):
+            card_id = o.get('id') if isinstance(o.get('id'), str) and 'story_card_info' in o else card_id
+            kind = o.get('__typename')
+            src = (o.get('browser_native_hd_url') or o.get('playable_url_quality_hd') or o.get('browser_native_sd_url') or o.get('playable_url')) if kind == 'Video' else None
+            thumb = ((o.get('preferred_thumbnail') or {}).get('image') or {}).get('uri') or (o.get('previewImage') or {}).get('uri')
+            if src:
+                cards.append((card_id, {'kind': 'video', 'src': src, 'thumb': thumb}))
+            elif kind == 'Photo' and (o.get('image') or {}).get('uri'):
+                cards.append((card_id, {'kind': 'image', 'src': o['image']['uri'], 'thumb': o['image']['uri']}))
+            for v in o.values():
+                media(v, card_id)
+        elif isinstance(o, list):
+            for v in o:
+                media(v, card_id)
+
+    # Only what's under the stories the page shows, not the profile pictures and ads around them.
+    def stories(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k in ('unified_stories', 'story_bucket', 'story_card_info') or k.startswith('unified_stories'):
+                    media(v, None)
+                else:
+                    stories(v)
+        elif isinstance(o, list):
+            for v in o:
+                stories(v)
+
+    for blob in re.findall(r'<script type="application/json"[^>]*>(.*?)</script>', page, re.S):
+        if 'story' in blob and ('playable_url' in blob or 'browser_native' in blob or '"Photo"' in blob):
+            try:
+                stories(json.loads(blob))
+            except ValueError:
+                pass
+    picked = [m for cid, m in cards if not card or cid == card] or [m for _, m in cards]
+    found = list({m['src']: m for m in picked}.values())
+    owner = re.search(r'"story_bucket_owner":\{[^{}]*"name":"([^"]+)"', page)
+    return named(found, f"{owner.group(1) if owner else 'facebook'} story") or None
+
+
+def profile(site, user, part='all', cursor=None, cookies=None, ua=None):
+    """A profile's stories, highlights and posts, for the app to show and pick from, as JSON:
+    {"name", "user", "private", "followed", "stories", "highlights": [{"id", "title"}], "posts",
+    "next"}, each story or post {"kind", "src", "thumb", "name"}. `part` "highlight:<id>" answers
+    {"items"} of one highlight, and "posts" with `cursor` the next page of posts. It sees what the
+    signed-in account sees: a private account's only when that account follows it. Only reading:
+    nothing marks a story seen. {"error": code} when it can't."""
+    try:
+        sign_in(cookies)
+        LOCAL.ua = ua
+        user = user.strip().lstrip('@').split('/')[0]
+        if not re.fullmatch(r'[\w.]{1,30}', user):
+            raise Failure('nothing')
+        if site == 'threads':
+            return json.dumps(threads_profile(user))
+        if site == 'instagram':
+            return json.dumps(ig_profile(user, part, cursor))
+        raise Failure('nothing')
+    except Failure as f:
+        return json.dumps({'error': str(f)})
+    except Exception as e:
+        return json.dumps({'error': f'{type(e).__name__}: {e}'[:300]})
+    finally:
+        LOCAL.opener = LOCAL.cookies = LOCAL.ua = None
+
+
+def picks(media, stem):
+    """Meta's media data as the app's picks: what to save, a preview, a name."""
+    return [{'kind': it['kind'], 'src': it['src'], 'thumb': it.get('thumb') or '', 'name': it['name']} for it in named(media_items(media), stem)]
+
+
+def ig_profile(user, part, cursor):
+    if not getattr(LOCAL, 'cookies', None):
+        raise Failure('login')
+    found = ((ig_api(f'users/web_profile_info/?username={urllib.parse.quote(user)}').get('data') or {}).get('user'))
+    if not found:
+        raise Failure('gone')
+    uid = str(found['id'])
+    out = {'name': found.get('full_name') or user, 'user': found.get('username') or user,
+           'private': bool(found.get('is_private')), 'followed': bool(found.get('followed_by_viewer'))}
+    if part.startswith('highlight:'):
+        reel = (ig_api(f'feed/reels_media/?reel_ids={part}').get('reels') or {}).get(part) or {}
+        return {**out, 'items': picks(reel.get('items') or [], f"{out['user']} {part.split(':')[1]}")}
+    # A private account the signed-in one doesn't follow shows nothing, and asking would only be refused.
+    if out['private'] and not out['followed']:
+        return {**out, 'stories': [], 'highlights': [], 'posts': [], 'next': None}
+    feed = ig_api(f'feed/user/{uid}/?count=12' + (f'&max_id={urllib.parse.quote(cursor)}' if cursor else ''))
+    out['posts'] = [p for m in feed.get('items') or [] for p in picks(m.get('carousel_media') or [m], f"{out['user']} {m.get('code') or m.get('pk')}")]
+    out['next'] = feed.get('next_max_id') if feed.get('more_available') else None
+    if part == 'all':
+        reel = (ig_api(f'feed/reels_media/?reel_ids={uid}').get('reels') or {}).get(uid) or {}
+        out['stories'] = picks(reel.get('items') or [], f"{out['user']} story")
+        tray = ig_api(f'highlights/{uid}/highlights_tray/').get('tray') or []
+        out['highlights'] = [{'id': h['id'], 'title': h.get('title') or ''} for h in tray if str(h.get('id', '')).startswith('highlight:')]
+    return out
+
+
+def threads_profile(user):
+    """A Threads profile's latest posts with photos or videos, from the data its page carries. Threads
+    has no stories."""
+    page, _ = page_of(f'https://www.threads.com/@{user}')
+    posts = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get('code') and ('image_versions2' in o or o.get('carousel_media')) and ((o.get('user') or {}).get('username') or user) == user:
+                posts.setdefault(o['code'], o)
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    for blob in re.findall(r'<script type="application/json"[^>]*>(.*?)</script>', page, re.S):
+        if 'image_versions2' in blob:
+            try:
+                walk(json.loads(blob))
+            except ValueError:
+                pass
+    items = [p for code, post in posts.items() for p in picks(post.get('carousel_media') or [post], f'{user} {code}')]
+    return {'name': user, 'user': user, 'private': '"is_private":true' in page and not items, 'followed': False,
+            'stories': [], 'highlights': [], 'posts': items, 'next': None}
 
 
 def x_token(tid):
@@ -486,6 +679,10 @@ def reddit_items(sub, post, hops=0):
         other = re.search(rf'reddit\.com/(?:r/(\w+)/comments|gallery)/((?!{post}\b)\w+)', page)
         return reddit_items(other.group(1), other.group(2), hops + 1) if other and not hops else None
     return named(out, f'{sub} {post}')
+
+
+def raise_(e):
+    raise e
 
 
 def named(items, stem):
@@ -641,6 +838,13 @@ def items_of(yt_dlp, url, base):
         raise Failure('nothing')
     if shared := shared_story(url):
         return story_items(None, highlight=shared[0], only=shared[1])
+    if m := FB_STORY.match(url):
+        # yt-dlp has no reader for Facebook stories.
+        return fb_story_items(url, m.group(2)) or raise_(Failure('broken'))
+    if TIKTOK_PHOTO.match(url) and (items := tiktok_photos(url)):
+        return items
+    if SNAP.match(url) and (items := snap_items(url)):
+        return items
     if m := META_POST.match(url):
         try:
             page, _ = page_of(url)
@@ -697,17 +901,19 @@ def unsigned_retry(run, cookies):
     return answer
 
 
-def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None, pick_items=None, thumbs=None, cookies=None):
+def save(url, out_dir, ytdlp_zip, progress, fmt=None, qjs=None, pick_items=None, thumbs=None, cookies=None, ua=None):
     """Saves a link. A post with several photos or videos answers {"choose": [{"kind", "thumb"}]}
     first, with a preview of each written to `thumbs`; save it again with pick_items ("0,2", or "all")
     to save those. Otherwise {"saves": [{"index", "files", "join"?}], "failed": n} or {"error": code}.
-    `cookies` signs in to the link's site (see sign_in)."""
-    return unsigned_retry(lambda c: save_signed(url, out_dir, ytdlp_zip, progress, fmt, qjs, pick_items, thumbs, c), cookies)
+    `cookies` signs in to the link's site (see sign_in), and `ua` is the user agent of the browser
+    that signed in, which sites that tie a sign-in to its browser get asked with."""
+    return unsigned_retry(lambda c: save_signed(url, out_dir, ytdlp_zip, progress, fmt, qjs, pick_items, thumbs, c, ua), cookies)
 
 
-def save_signed(url, out_dir, ytdlp_zip, progress, fmt, qjs, pick_items, thumbs, cookies):
+def save_signed(url, out_dir, ytdlp_zip, progress, fmt, qjs, pick_items, thumbs, cookies, ua=None):
     try:
         sign_in(cookies)
+        LOCAL.ua = ua
         url = unwrap(url.strip())
         if not re.match(r'https?://\S+$', url):
             raise Failure('nothing')
@@ -762,20 +968,21 @@ def save_signed(url, out_dir, ytdlp_zip, progress, fmt, qjs, pick_items, thumbs,
     except Exception as e:  # anything unexpected still reaches the screen as text
         return json.dumps({'error': f'{type(e).__name__}: {e}'[:300]})
     finally:
-        LOCAL.opener = LOCAL.cookies = None
+        LOCAL.opener = LOCAL.cookies = LOCAL.ua = None
 
 
-def save_file(url, out_dir, progress, referer=None, cookies=None):
-    """Saves a photo or video file itself, as the picker finds one on a web page, full size where
-    the site keeps one. Answers as save() does."""
-    return unsigned_retry(lambda c: save_file_signed(url, out_dir, progress, referer, c), cookies)
+def save_file(url, out_dir, progress, referer=None, cookies=None, name=None):
+    """Saves a photo or video file itself, as the picker finds one on a web page, or a profile's story
+    or post picked in the app, full size where the site keeps one. `name` names it, else its URL
+    does. Answers as save() does."""
+    return unsigned_retry(lambda c: save_file_signed(url, out_dir, progress, referer, c, name), cookies)
 
 
-def save_file_signed(url, out_dir, progress, referer, cookies):
+def save_file_signed(url, out_dir, progress, referer, cookies, name=None):
     try:
         sign_in(cookies)
         progress.report('saving', -1.0)
-        stem = os.path.splitext(os.path.basename(urllib.parse.urlparse(url).path))[0]
+        stem = name or os.path.splitext(os.path.basename(urllib.parse.urlparse(url).path))[0]
         item = named([{'src': upgrade(url) or url, 'alts': [url]}], stem or 'image')[0]
         return json.dumps({'saves': [{'index': 0, 'files': [fetch(item, referer, out_dir, progress, 0, 100)]}], 'failed': 0})
     except Failure as f:

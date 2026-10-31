@@ -29,10 +29,12 @@ pub struct Site {
     keep: &'static [&'static str],
 }
 
+// Instagram and Facebook tie a sign-in to the browser it came from by its device cookies (mid,
+// ig_did, datr, sb), so those go with the session cookies.
 pub const SITES: [Site; 6] = [
-    Site { id: "instagram", name: "Instagram", login: "https://www.instagram.com/accounts/login/", home: "https://www.instagram.com/", domains: &["instagram.com"], session: &["sessionid"], keep: &["sessionid", "csrftoken", "ds_user_id"] },
-    Site { id: "threads", name: "Threads", login: "https://www.threads.com/login", home: "https://www.threads.com/", domains: &["threads.com", "threads.net"], session: &["sessionid"], keep: &["sessionid", "csrftoken", "ds_user_id"] },
-    Site { id: "facebook", name: "Facebook", login: "https://www.facebook.com/login/", home: "https://www.facebook.com/", domains: &["facebook.com", "fb.com", "fb.watch"], session: &["c_user", "xs"], keep: &["c_user", "xs"] },
+    Site { id: "instagram", name: "Instagram", login: "https://www.instagram.com/accounts/login/", home: "https://www.instagram.com/", domains: &["instagram.com"], session: &["sessionid"], keep: &["sessionid", "csrftoken", "ds_user_id", "mid", "ig_did", "datr", "rur"] },
+    Site { id: "threads", name: "Threads", login: "https://www.threads.com/login", home: "https://www.threads.com/", domains: &["threads.com", "threads.net"], session: &["sessionid"], keep: &["sessionid", "csrftoken", "ds_user_id", "mid", "ig_did", "datr", "rur"] },
+    Site { id: "facebook", name: "Facebook", login: "https://www.facebook.com/login/", home: "https://www.facebook.com/", domains: &["facebook.com", "fb.com", "fb.watch"], session: &["c_user", "xs"], keep: &["c_user", "xs", "datr", "sb", "fr"] },
     Site { id: "x", name: "X", login: "https://x.com/i/flow/login", home: "https://x.com/", domains: &["x.com", "twitter.com", "t.co"], session: &["auth_token"], keep: &["auth_token", "ct0"] },
     Site {
         id: "tiktok",

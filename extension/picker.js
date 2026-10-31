@@ -8,12 +8,22 @@
   const MIN = 64; // px; smaller media (icons, avatars) gets no checkbox
   const MAX = 100;
   const COPY = {
-    en: { pick: 'Pick', unpick: 'Unpick', picked: (n) => `${n} picked`, save: (n) => `Save ${n}`, saving: (i, n) => `Saving… ${i}/${n}`, done: (n) => `Saved ${n}!`, failed: (n) => `${n} failed`, partly: (n) => `${n} only partly loaded`, show: 'Show', clear: 'Clear' },
-    tl: { pick: 'Piliin', unpick: 'Alisin', picked: (n) => `${n} napili`, save: (n) => `I-save ang ${n}`, saving: (i, n) => `Sine-save… ${i}/${n}`, done: (n) => `Na-save ang ${n}!`, failed: (n) => `${n} pumalya`, partly: (n) => `${n} hindi buo`, show: 'Ipakita', clear: 'Burahin' },
+    en: {
+      pick: 'Pick', unpick: 'Unpick', picked: (n) => `${n} picked`, save: (n) => `Save ${n}`, saving: (i, n) => `Saving… ${i}/${n}`, done: (n) => `Saved ${n}!`, failed: (n) => `${n} failed`, partly: (n) => `${n} only partly loaded`, show: 'Show', clear: 'Clear',
+      downloads: 'Downloads', chooseFolder: 'Choose folder', perFile: 'Folder per file', saveTo: (p) => `Saves go to ${p}. Click to pick another folder.`,
+      route: 'Where does each one go?', choose: 'Choose…', routeFor: (n) => `Save ${n} to`, cancel: 'Cancel', noApp: 'went to Downloads',
+    },
+    tl: {
+      pick: 'Piliin', unpick: 'Alisin', picked: (n) => `${n} napili`, save: (n) => `I-save ang ${n}`, saving: (i, n) => `Sine-save… ${i}/${n}`, done: (n) => `Na-save ang ${n}!`, failed: (n) => `${n} pumalya`, partly: (n) => `${n} hindi buo`, show: 'Ipakita', clear: 'Burahin',
+      downloads: 'Downloads', chooseFolder: 'Pumili ng folder', perFile: 'Folder bawat file', saveTo: (p) => `Sa ${p} napupunta ang saves. I-click para pumili ng ibang folder.`,
+      route: 'Saan ilalagay ang bawat isa?', choose: 'Pumili…', routeFor: (n) => `Saan ise-save ang ${n}`, cancel: 'Huwag na', noApp: 'napunta sa Downloads',
+    },
   };
-  const prefs = { hover: true, lang: 'en', motion: 'on' };
+  const prefs = { hover: true, lang: 'en', motion: 'on', saveTo: 'downloads', lastDir: '', fixedDir: '', dirs: [] };
   const say = (k, ...a) => { const v = COPY[prefs.lang === 'tl' ? 'tl' : 'en'][k]; return typeof v === 'function' ? v(...a) : v };
   const CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  const FOLDER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5v10c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-8c0-1.1-.9-2-2-2h-7L10 5H5c-1.1 0-2 .9-2 2z"/></svg>';
+  const base = (dir) => dir.split(/[\\/]/).filter(Boolean).pop() || dir;
   const LOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="11" width="13" height="9" rx="2"/><path d="M8.5 11V8.5a3.5 3.5 0 0 1 7 0V11"/></svg>';
   const FACE = '<svg class="face" viewBox="20 22 68 68" aria-hidden="true"><defs><radialGradient id="f" cx=".38" cy=".3" r=".78"><stop offset="0" stop-color="#F8DDB8"/><stop offset=".55" stop-color="#E8B37A"/><stop offset="1" stop-color="#C98E52"/></radialGradient></defs><circle cx="36" cy="36" r="9" fill="url(#f)"/><circle cx="72" cy="36" r="9" fill="url(#f)"/><path d="M54 30C72 30 84 42 84 60C84 76 71 86 54 86C37 86 24 76 24 60C24 42 36 30 54 30Z" fill="url(#f)"/><ellipse cx="54" cy="73" rx="15" ry="10" fill="#FBEBD6"/><g class="cheeks"><ellipse cx="29" cy="66" rx="11" ry="10" fill="#F3CFA3"/><ellipse cx="79" cy="66" rx="11" ry="10" fill="#F3CFA3"/></g><circle cx="44" cy="56" r="5" fill="#141414"/><circle cx="64" cy="56" r="5" fill="#141414"/><circle cx="45.8" cy="54" r="1.8" fill="#fff"/><circle cx="65.8" cy="54" r="1.8" fill="#fff"/><path d="M51 64.6Q54 63 57 64.6Q55.8 67.6 54 68Q52.2 67.6 51 64.6Z" fill="#EE7A6E"/></svg>';
   const FLOAT = 'linear(0,0.034,0.119,0.236,0.373,0.515,0.649,0.774,0.883,0.969,1.038,1.088,1.119,1.135,1.139,1.134,1.121,1.104,1.086,1.066,1.047,1.03,1.015,1.003,0.994,0.987,0.983,0.981,0.981,0.982,0.983,0.986,0.988,0.991,0.994,1)';
@@ -74,8 +84,22 @@
     .bar button { font: inherit; border: 0; cursor: pointer; transition: transform .222s ${SNAP} }
     .bar button:active { transform: scale(.94) }
     .save { min-height: 40px; padding: 0 18px; border-radius: 999px; background: #FF8A3D; color: #0F0F10 }
-    .save[hidden], .x[hidden] { display: none }
+    .save[hidden], .x[hidden], .dest[hidden], .route[hidden] { display: none }
     .x { width: 40px; height: 40px; border-radius: 50%; background: #202023; color: #F4F3F1; font-size: 18px; line-height: 1 }
+    .dest { display: inline-flex; align-items: center; gap: 6px; max-width: 170px; min-height: 40px; padding: 0 14px 0 12px; border-radius: 999px; background: #202023; color: #F4F3F1 }
+    .dest svg, .route svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round }
+    .dest span { overflow: hidden; text-overflow: ellipsis }
+    .route { position: fixed; left: 50%; bottom: 80px; width: min(440px, calc(100vw - 32px)); max-height: 52vh; overflow: auto; display: grid; gap: 8px; padding: 12px;
+      border-radius: 22px; background: #18181A; color: #F4F3F1; box-shadow: 0 18px 44px rgb(0 0 0 / .45), 0 0 0 1px #2C2C2F; pointer-events: auto; transform: translateX(-50%);
+      font: 600 13px/1.25 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; animation: rise .678s ${FLOAT} both }
+    .route p { margin: 2px 4px 4px; font-size: 14px }
+    .route .row { display: flex; align-items: center; gap: 10px }
+    .route img, .route .ph { width: 36px; height: 36px; flex: none; border-radius: 10px; object-fit: cover; background: #2C2C2F }
+    .route .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; color: #A3A19C }
+    .route select { max-width: 180px; min-height: 34px; padding: 0 10px; border: 1px solid #2C2C2F; border-radius: 999px; background: #202023; color: #F4F3F1; font: inherit; cursor: pointer }
+    .route .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px }
+    .route button { font: inherit; border: 0; cursor: pointer; min-height: 38px; padding: 0 16px; border-radius: 999px; background: #202023; color: #F4F3F1 }
+    .route .go { background: #FF8A3D; color: #0F0F10 }
     .still * { animation: none !important; transition: none !important }
     @keyframes pop { from { opacity: 0; transform: scale(.5) } }
     @keyframes ring { from { opacity: 0; transform: scale(1.04) } }
@@ -275,28 +299,35 @@
   const guard = (e) => {
     if (e.target !== host) return;
     e.stopImmediatePropagation();
+    // A folder list opens on its own press. Everything else in the overlay is LodiSave's alone.
+    if (e.composedPath()[0]?.closest?.('select')) return;
     e.preventDefault();
     if (e.type !== 'click') return;
     const btn = e.composedPath()[0]?.closest?.('[data-act]');
     if (!btn) return;
+    const act = btn.dataset.act;
     if (btn === hoverBox && hovered) toggle(hovered.el, hovered.item);
-    else if (btn.dataset.act === 'toggle') { const slot = pool.find((s) => s.box === btn); if (slot?.el) toggle(slot.el) }
-    else if (btn.dataset.act === 'save') saveAll();
-    else if (btn.dataset.act === 'clear') chrome.runtime.sendMessage({ type: 'clear-picked' }).catch(() => {});
-    else if (btn.dataset.act === 'show' && bar.last) chrome.runtime.sendMessage({ type: 'show-download', id: bar.last }).catch(() => {});
+    else if (act === 'toggle') { const slot = pool.find((s) => s.box === btn); if (slot?.el) toggle(slot.el) }
+    else if (act === 'save') saveAll();
+    else if (act === 'clear') chrome.runtime.sendMessage({ type: 'clear-picked' }).catch(() => {});
+    else if (act === 'show' && bar.last) chrome.runtime.sendMessage({ type: 'show-download', id: bar.last }).catch(() => {});
+    // The folder saves go to: the app's folder picker, or with a folder per file, the list.
+    else if (act === 'dest') prefs.saveTo === 'each' ? saveAll() : chrome.runtime.sendMessage({ type: 'choose-folder', title: say('chooseFolder') }).catch(() => {});
+    else if (act === 'route-save') { const dirs = bar.route.dirs; bar.route = null; paintRoute(); saveAll(dirs) }
+    else if (act === 'route-cancel') { bar.route = null; paintRoute() }
   };
   for (const t of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu']) window.addEventListener(t, guard, true);
 
   // The bar, top frame only. It counts the picks of every frame in the tab.
   const counts = new Map(); // frameId -> picks
-  const bar = { node: null, state: 'pick', progress: null, done: null, last: null, timer: 0 };
+  const bar = { node: null, state: 'pick', progress: null, done: null, last: null, timer: 0, route: null };
   function paintBar() {
     if (!TOP) return;
     const total = [...counts.values()].reduce((a, b) => a + b, 0);
     if (!bar.node) {
       bar.node = Object.assign(document.createElement('div'), { className: 'bar', hidden: true });
       const burst = [0, 60, 120, 180, 240, 300].map((a) => `<i style="--a:${a}deg"></i>`).join('');
-      bar.node.innerHTML = `<span class="lodi">${FACE}<span class="burst">${burst}</span></span><span class="tray"></span><span class="text"></span><button type="button" class="save" data-act="save"></button><button type="button" class="x" data-act="clear">×</button><i class="line"></i>`;
+      bar.node.innerHTML = `<span class="lodi">${FACE}<span class="burst">${burst}</span></span><span class="tray"></span><span class="text"></span><button type="button" class="dest" data-act="dest">${FOLDER}<span></span></button><button type="button" class="save" data-act="save"></button><button type="button" class="x" data-act="clear">×</button><i class="line"></i>`;
       layer.append(bar.node);
     }
     if (!bar.node.isConnected) layer.append(bar.node);
@@ -309,6 +340,12 @@
     const text = bar.node.querySelector('.text'), save = bar.node.querySelector('.save'), x = bar.node.querySelector('.x');
     x.title = say('clear');
     x.hidden = bar.state !== 'pick';
+    // Where Save sends the picks, by the popup's Save to setting.
+    const dest = bar.node.querySelector('.dest'), to = prefs.saveTo || 'downloads';
+    const dir = to === 'fixed' ? prefs.fixedDir : to === 'last' ? prefs.lastDir : '';
+    dest.hidden = bar.state !== 'pick';
+    dest.lastElementChild.textContent = to === 'each' ? say('perFile') : to === 'downloads' ? say('downloads') : dir ? base(dir) : say('chooseFolder');
+    dest.title = say('saveTo', to === 'each' ? say('perFile').toLowerCase() : dir || 'Downloads › LodiSave');
     if (bar.state === 'pick') {
       text.textContent = say('picked', total);
       save.hidden = false;
@@ -319,9 +356,10 @@
       bar.node.style.setProperty('--fill', bar.progress ? bar.progress[0] / bar.progress[1] : 0);
       save.hidden = true;
     } else {
-      const { ok, bad, warn } = bar.done;
-      const notes = [bad && say('failed', bad), warn && say('partly', warn)].filter(Boolean).join(' · ');
+      const { ok, bad, warn, note, error } = bar.done;
+      const notes = [bad && say('failed', bad), warn && say('partly', warn), note && say('noApp')].filter(Boolean).join(' · ');
       text.innerHTML = '';
+      text.title = [error, note].filter(Boolean).join('\n');
       text.append(say('done', ok), ...(notes ? [' ', Object.assign(document.createElement('span'), { className: 'note', textContent: notes })] : []));
       save.hidden = !bar.last;
       save.dataset.act = 'show';
@@ -358,13 +396,55 @@
     paintBar();
   }
 
-  async function saveAll() {
+  // With a folder per file, the picks first show in a list, each with its folder.
+  const framesPicked = () => [...counts].filter(([, n]) => n > 0).map(([f]) => f);
+  async function startRoute() {
+    const items = await chrome.runtime.sendMessage({ type: 'list-picked', frames: framesPicked() }).catch(() => []);
+    if (!items?.length) return;
+    bar.route = { items, dirs: Object.fromEntries(items.map((it) => [it.url, prefs.lastDir || ''])) };
+    paintRoute();
+  }
+  function paintRoute() {
+    let panel = layer.querySelector('.route');
+    if (!bar.route) return panel?.remove();
+    if (!panel) layer.append((panel = Object.assign(document.createElement('div'), { className: 'route' })));
+    const { items, dirs } = bar.route;
+    const known = [...new Set([...(prefs.dirs || []), ...Object.values(dirs)].filter(Boolean))];
+    const rows = items.map((it) => {
+      const row = Object.assign(document.createElement('div'), { className: 'row' });
+      const pic = it.thumb ? Object.assign(document.createElement('img'), { src: it.thumb, alt: '', referrerPolicy: 'no-referrer' }) : Object.assign(document.createElement('span'), { className: 'ph' });
+      const select = document.createElement('select');
+      select.append(...known.map((d) => new Option(base(d), d, false, d === dirs[it.url])), new Option(say('choose'), '?', false, !dirs[it.url]));
+      select.title = dirs[it.url] || '';
+      select.onchange = async () => {
+        if (select.value !== '?') dirs[it.url] = select.value;
+        else {
+          const r = await chrome.runtime.sendMessage({ type: 'choose-folder', title: say('routeFor', it.name) }).catch(() => null);
+          if (r?.dir) dirs[it.url] = r.dir;
+        }
+        paintRoute();
+      };
+      row.append(pic, Object.assign(document.createElement('span'), { className: 'name', textContent: it.name, title: it.name }), select);
+      return row;
+    });
+    const acts = Object.assign(document.createElement('div'), { className: 'acts' });
+    acts.innerHTML = `<button type="button" data-act="route-cancel"></button><button type="button" class="go" data-act="route-save"></button>`;
+    acts.firstChild.textContent = say('cancel');
+    acts.lastChild.textContent = say('save', items.length);
+    panel.replaceChildren(Object.assign(document.createElement('p'), { textContent: say('route') }), ...rows, acts);
+    ensure();
+  }
+
+  async function saveAll(route) {
+    if (prefs.saveTo === 'each' && !route) return startRoute();
     bar.state = 'saving';
     bar.progress = null;
     bar.node.querySelector('.tray').replaceChildren();
     paintBar();
-    const frames = [...counts].filter(([, n]) => n > 0).map(([f]) => f);
-    const r = await chrome.runtime.sendMessage({ type: 'save-picked', frames }).catch((e) => ({ ok: 0, bad: 1, error: e.message }));
+    const frames = framesPicked();
+    const r = await chrome.runtime.sendMessage({ type: 'save-picked', frames, route }).catch((e) => ({ ok: 0, bad: 1, error: e.message }));
+    // The folder picker was closed: the picks stay, ready to save again.
+    if (r.cancelled) { bar.state = 'pick'; return paintBar() }
     if (prefs.motion !== 'off') await new Promise((done) => setTimeout(done, 700)); // let the last one land in Lodi's cheeks
     counts.clear();
     bar.state = 'done';
@@ -379,7 +459,7 @@
     if (msg.type === 'take-picked') reply([...picked.values()].map((p) => ({ ...p.item, thumb: p.thumb })));
     else if (msg.type === 'clear-picked') {
       picked.clear();
-      if (TOP) { counts.clear(); if (bar.state === 'pick') paintBar() }
+      if (TOP) { counts.clear(); bar.route = null; paintRoute(); if (bar.state === 'pick') paintBar() }
       render();
     } else if (TOP && msg.type === 'frame-picked') {
       counts.set(msg.frameId, msg.count);
@@ -389,11 +469,12 @@
     else if (TOP && msg.type === 'bar-item') landTray(msg.i, msg.ok);
   });
 
-  chrome.storage.local.get(['hover', 'lang', 'motion']).then((p) => { Object.assign(prefs, p); render() }).catch(() => {});
+  chrome.storage.local.get(Object.keys(prefs)).then((p) => { Object.assign(prefs, p); render() }).catch(() => {});
   chrome.storage.onChanged.addListener((c) => {
     for (const k of Object.keys(c)) prefs[k] = c[k].newValue;
     if (prefs.hover === false) hovered = null;
     if (TOP && bar.node) paintBar();
+    if (TOP && bar.route) paintRoute();
     render();
   });
 })();

@@ -1,5 +1,14 @@
 package io.github.jherobred.lodisave
 
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.round
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
+import kotlinx.coroutines.coroutineScope
+import androidx.compose.foundation.layout.RowScope
 import android.content.ContentValues
 import android.content.Context
 import android.os.Build
@@ -82,6 +91,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
@@ -108,10 +118,20 @@ object Library {
     fun albums(ctx: Context, media: List<Saved>) =
         (media.map { it.album } + Prefs(ctx).albums).filter { it.isNotEmpty() }.distinct().sortedBy { it.lowercase() }
 
-    /** Changes each file off the main thread, then has screens load saves again. The number that failed. */
+    /** Changes each file off the main thread, then has screens load saves again. Files other apps
+     *  made change only after the user's yes, which Android asks once for all of them. The number
+     *  that failed. */
     suspend fun each(items: List<Saved>, change: (Saved) -> Unit): Int {
-        val failed = withContext(Dispatchers.IO) {
-            items.count { runCatching { change(it) }.onFailure { e -> android.util.Log.w("LodiLibrary", "${it.name}: $e") }.isFailure }
+        val refused = mutableListOf<Saved>()
+        var failed = withContext(Dispatchers.IO) {
+            items.count { item ->
+                runCatching { change(item) }.onFailure { e ->
+                    if (e is SecurityException) refused += item else android.util.Log.w("LodiLibrary", "${item.name}: $e")
+                }.isFailure
+            }
+        }
+        if (refused.isNotEmpty() && Consent.ask(refused.map { it.uri })) {
+            failed -= withContext(Dispatchers.IO) { refused.count { runCatching { change(it) }.isSuccess } }
         }
         changes++
         return failed
@@ -120,6 +140,31 @@ object Library {
     /** Into an album, or out of all of them with "". It stays under Pictures, Movies or Music. */
     fun move(ctx: Context, item: Saved, album: String) =
         update(ctx, item, MediaStore.MediaColumns.RELATIVE_PATH, item.path.substringBefore('/') + "/LodiSave/" + if (album.isEmpty()) "" else "$album/")
+
+    /** The Gallery's albums: the phone's folders that hold photos and videos, as paths like
+     *  "DCIM/Camera/", and ones made here that have no files yet. */
+    fun folders(ctx: Context, media: List<Saved>) =
+        (media.map { it.path } + Prefs(ctx).folders).filter { it.isNotEmpty() }.distinct().sortedBy { folderName(it).lowercase() }
+
+    /** A folder's own name, the last part of its path. */
+    fun folderName(folder: String) = folder.trimEnd('/').substringAfterLast('/')
+
+    /** Into another of the phone's folders. Android keeps photos out of Movies and Music, so a photo
+     *  goes to a folder of that name in its own top folder instead. */
+    fun moveTo(ctx: Context, item: Saved, folder: String) {
+        try {
+            update(ctx, item, MediaStore.MediaColumns.RELATIVE_PATH, folder)
+        } catch (e: IllegalArgumentException) {
+            update(ctx, item, MediaStore.MediaColumns.RELATIVE_PATH, item.path.substringBefore('/') + "/" + folderName(folder) + "/")
+        }
+    }
+
+    /** A Gallery album with no files yet. Its files go under Pictures, where photos and videos may both live. */
+    fun addFolder(ctx: Context, name: String) {
+        val prefs = Prefs(ctx)
+        prefs.folders += "${android.os.Environment.DIRECTORY_PICTURES}/$name/"
+        changes++
+    }
 
     /** A new name, keeping the file's extension. */
     fun rename(ctx: Context, item: Saved, name: String) {
@@ -192,19 +237,36 @@ object Library {
     private fun trashedToo() = Bundle().apply { putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_INCLUDE) }
 }
 
+/**
+ * Android's own "Allow LodiSave to change these?" for files other apps made, which LodiSave may only
+ * change after a yes (Android 11 and up). MainActivity shows it. Android 10 asks file by file, which
+ * LodiSave doesn't, so changes there reach LodiSave's own files only.
+ */
+object Consent {
+    var asker: (suspend (List<android.net.Uri>) -> Boolean)? = null
+
+    suspend fun ask(uris: List<android.net.Uri>) = Build.VERSION.SDK_INT >= 30 && withContext(Dispatchers.Main) { asker?.invoke(uris) } == true
+}
+
 private val FILTERS = listOf("all", "photo", "video", "gif", "audio", "fav", "trash")
 
 /** A question with what a yes does. */
 private class Ask(val question: String, val yes: () -> Unit)
 
 /** Every save, to look through and organize: kinds, favorites and the trash, albums, search and
- *  sort, and long-press to pick several. `seen` is the save the viewer last showed, to scroll to. */
+ *  sort, and long-press to pick several. `seen` is the save the viewer last showed, to scroll to.
+ *  As the `gallery`, it shows the phone's photos and videos instead, its albums the phone's folders.
+ *  `bottom` leaves room for the tab bar, which `onPicking` hears to make way for the picking bar. */
 @Composable
-fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpen: (List<Long>, Int, Boolean) -> Unit, onBack: () -> Unit) {
+fun Library(
+    copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpen: (List<Long>, Int, Boolean) -> Unit,
+    gallery: Boolean = false, bottom: Dp = 0.dp, onPicking: (Boolean) -> Unit = {}, top: @Composable () -> Unit = {},
+) {
     val ctx = LocalContext.current
     val t = LocalTokens.current
     val motion = LocalMotion.current
     val scope = rememberCoroutineScope()
+    val label = { album: String -> if (gallery) Library.folderName(album) else album }
     var filter by rememberSaveable { mutableStateOf("all") }
     var sort by rememberSaveable { mutableStateOf("new") }
     var query by rememberSaveable { mutableStateOf("") }
@@ -219,11 +281,11 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
     val snack = remember { SnackbarHostState() }
     val trash = filter == "trash"
     val changes = Library.changes
-    val albums = remember(media, changes) { Library.albums(ctx, media) }
+    val albums = remember(media, changes) { if (gallery) Library.folders(ctx, media) else Library.albums(ctx, media) }
     val hidden = remember(changes) { Prefs(ctx).hiddenFromHome }
     val list = remember(media, bin, filter, sort, query, album) {
         (if (trash) bin else media)
-            .filter { trash || album == null || it.album == album }
+            .filter { trash || album == null || (if (gallery) it.path else it.album) == album }
             .filter {
                 when (filter) {
                     "fav" -> it.favorite
@@ -251,10 +313,13 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
         at
     }
     LaunchedEffect(Unit) { delay(700); entered = true }
+    LaunchedEffect(picked.isNotEmpty()) { onPicking(picked.isNotEmpty()) }
     BackHandler(picked.isNotEmpty()) { picked = emptyList() }
     BackHandler(picked.isEmpty() && searching) { searching = false; query = "" }
 
     fun toggle(item: Saved) { picked = if (item.id in picked) picked - item.id else picked + item.id }
+    var swiping by remember { mutableStateOf(false) }
+    val connectDrive = rememberDriveConnect { message -> scope.launch { snack.showSnackbar(message) } }
     fun done(message: String, undo: (suspend () -> Unit)? = null) = scope.launch {
         snack.currentSnackbarData?.dismiss()
         val r = snack.showSnackbar(message, undo?.let { copy.undo }, duration = SnackbarDuration.Short)
@@ -271,7 +336,6 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
                     Text(if (every) copy.pickNone else copy.pickAll, color = t.accent, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
                         modifier = Modifier.clip(CircleShape).clickable { picked = if (every) emptyList() else list.map { it.id } }.padding(horizontal = 10.dp, vertical = 8.dp))
                 } else {
-                    RoundButton(Glyph.Back, copy.back, onBack)
                     if (searching) {
                         val focus = remember { FocusRequester() }
                         LaunchedEffect(Unit) { focus.requestFocus() }
@@ -286,8 +350,9 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
                             keyboardActions = KeyboardActions(onSearch = {}),
                             decorationBox = { field -> if (query.isEmpty()) Text(copy.search, color = t.muted, fontFamily = Geist, fontSize = 15.sp); field() },
                         )
-                    } else Column(Modifier.weight(1f)) {
-                        Text(if (trash) copy.trash else album ?: copy.library, fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = t.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    } else Column(Modifier.weight(1f).padding(start = 4.dp)) {
+                        Text(if (trash) copy.trash else album?.let(label) ?: if (gallery) copy.gallery else copy.library,
+                            fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = t.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(copy.files(list.size), fontFamily = GeistMono, fontSize = 12.sp, color = t.muted)
                     }
                     RoundButton(if (searching) Glyph.Close else Glyph.Search, copy.search, { searching = !searching; if (!searching) query = "" })
@@ -306,8 +371,10 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
                 }
             }
 
+            top()
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(FILTERS) { key ->
+                // The Gallery shows photos and videos, so it has no audio.
+                items(if (gallery) FILTERS - "audio" else FILTERS) { key ->
                     val label = when (key) {
                         "photo" -> copy.photos
                         "video" -> copy.videos
@@ -330,10 +397,11 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
                     }.padding(horizontal = 10.dp, vertical = 8.dp))
             } else {
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(albums, key = { it }) { name -> Chip(name, album == name, { album = if (album == name) null else name; picked = emptyList() }, Modifier.animateItem(), Glyph.Folder) }
+                    items(albums, key = { it }) { name -> Chip(label(name), album == name, { album = if (album == name) null else name; picked = emptyList() }, Modifier.animateItem(), Glyph.Folder) }
                     item(key = "+") { Chip(copy.newAlbum, false, { naming = "" }, Modifier.animateItem(), Glyph.Plus) }
                 }
-                album?.let { name ->
+                // The phone's folders belong to the apps that made them, so the Gallery doesn't rename or remove them.
+                if (!gallery) album?.let { name ->
                     Row(Modifier.padding(horizontal = 16.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(copy.rename, color = t.accent, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
                             modifier = Modifier.clip(CircleShape).clickable { naming = name }.padding(horizontal = 10.dp, vertical = 8.dp))
@@ -350,18 +418,18 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
             Spacer(Modifier.size(8.dp))
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                if (list.isEmpty()) Empty(copy, filter, album, query)
+                if (list.isEmpty()) Empty(copy, filter, album, query, gallery)
                 else LazyVerticalGrid(
-                    GridCells.Fixed(3), Modifier.fillMaxSize(), grid,
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
+                    GridCells.Fixed(3), Modifier.fillMaxSize().dragToPick(grid, list, { picked }, { picked = it }, { swiping = it }), grid,
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp + bottom),
                     horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     itemsIndexed(list, key = { _, it -> it.id }) { i, item ->
                         Tile(
-                            item, picked.isNotEmpty(), item.id in picked, "${item.id}" in hidden, if (entered) -1 else i,
+                            item, if (gallery) "gal" else "lib", picked.isNotEmpty(), item.id in picked, "${item.id}" in hidden, if (entered) -1 else i,
                             if (motion) Modifier.animateItem() else Modifier.animateItem(null, null, null),
-                            onClick = { if (picked.isNotEmpty()) toggle(item) else onOpen(list.map { it.id }, i, trash) },
-                            onLongClick = { toggle(item) },
+                            // A press that turned into picking by holding isn't a tap as well.
+                            onClick = { if (swiping) Unit else if (picked.isNotEmpty()) toggle(item) else onOpen(list.map { it.id }, i, trash) },
                         )
                     }
                 }
@@ -393,6 +461,16 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
                     }
                 } else {
                     Act(Glyph.Share, copy.share) { share(ctx, chosen) }
+                    // Into the LodiSave folder in the user's Google Drive, once Drive is connected.
+                    Act(Glyph.Cloud, copy.toDrive) {
+                        val these = chosen
+                        connectDrive { ok ->
+                            if (!ok) return@connectDrive
+                            picked = emptyList()
+                            Drive.queue(ctx, these)
+                            done(copy.queuedToDrive(these.size))
+                        }
+                    }
                     Act(Glyph.Folder, copy.move) { moving = chosen }
                     val loved = chosen.isNotEmpty() && chosen.all { it.favorite }
                     Act(if (loved) Glyph.HeartFull else Glyph.Heart, if (loved) copy.unfavorite else copy.favorite) {
@@ -400,8 +478,9 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
                         picked = emptyList()
                         scope.launch { Library.each(these) { Library.favorite(ctx, it, !loved) } }
                     }
+                    // Home shows LodiSave's own saves only, so the Gallery has nothing to hide from it.
                     val off = chosen.isNotEmpty() && chosen.all { "${it.id}" in hidden }
-                    Act(if (off) Glyph.Eye else Glyph.EyeOff, if (off) copy.showOnHome else copy.hideFromHome) {
+                    if (!gallery) Act(if (off) Glyph.Eye else Glyph.EyeOff, if (off) copy.showOnHome else copy.hideFromHome) {
                         Library.hide(ctx, chosen, !off)
                         picked = emptyList()
                     }
@@ -413,7 +492,7 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
                 }
             }
         }
-        LodiSnackbar(snack, Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(bottom = if (picked.isNotEmpty()) 96.dp else 16.dp))
+        LodiSnackbar(snack, Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(bottom = if (picked.isNotEmpty()) 96.dp else 16.dp + bottom))
     }
 
     naming?.let { name ->
@@ -421,7 +500,8 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
             naming = null
             val clean = Library.clean(typed)
             if (clean.isEmpty() || clean == name) return@NameDialog
-            if (name.isEmpty()) { Library.addAlbum(ctx, clean); album = clean }
+            if (gallery) { Library.addFolder(ctx, clean); album = "${android.os.Environment.DIRECTORY_PICTURES}/$clean/" }
+            else if (name.isEmpty()) { Library.addAlbum(ctx, clean); album = clean }
             else {
                 album = clean
                 scope.launch { Library.renameAlbum(ctx, media, name, clean).let { if (it > 0) done(copy.notDone(it)) } }
@@ -430,12 +510,12 @@ fun Library(copy: Copy, media: List<Saved>, bin: List<Saved>, seen: Long?, onOpe
     }
     asking?.let { ask -> Confirm(copy, ask.question, { asking = null }) { asking = null; ask.yes() } }
     moving?.let { these ->
-        AlbumSheet(copy, albums, { moving = null }) { to ->
+        AlbumSheet(copy, albums, { moving = null }, label, none = !gallery) { to ->
             moving = null
             picked = emptyList()
             scope.launch {
-                val failed = Library.each(these) { Library.move(ctx, it, to) }
-                done(if (failed > 0) copy.notDone(failed) else copy.moved(these.size, to.ifEmpty { copy.noAlbum }))
+                val failed = Library.each(these) { if (gallery) Library.moveTo(ctx, it, to) else Library.move(ctx, it, to) }
+                done(if (failed > 0) copy.notDone(failed) else copy.moved(these.size, if (to.isEmpty()) copy.noAlbum else label(to)))
             }
         }
     }
@@ -450,11 +530,48 @@ fun trashWithUndo(scope: CoroutineScope, ctx: Context, copy: Copy, items: List<S
     }
 }
 
+/** Holding a tile picks it, and sliding on from there picks every tile between, scrolling at the
+ *  grid's edges, as in a phone's own gallery. `on` hears whether a slide is going on. */
+private fun Modifier.dragToPick(grid: LazyGridState, list: List<Saved>, picked: () -> List<Long>, pick: (List<Long>) -> Unit, on: (Boolean) -> Unit) =
+    pointerInput(list) {
+        fun at(p: Offset) = grid.layoutInfo.visibleItemsInfo.firstOrNull { IntRect(it.offset, it.size).contains(p.round()) }?.index
+        val edge = 64.dp.toPx()
+        var start = -1
+        var before = emptyList<Long>()
+        coroutineScope {
+            var scroll: kotlinx.coroutines.Job? = null
+            detectDragGesturesAfterLongPress(
+                onDragStart = { p ->
+                    val i = at(p) ?: return@detectDragGesturesAfterLongPress
+                    start = i
+                    before = picked() - list[i].id
+                    pick(before + list[i].id)
+                    on(true)
+                },
+                onDrag = { change, _ ->
+                    if (start < 0) return@detectDragGesturesAfterLongPress
+                    change.consume()
+                    val y = change.position.y
+                    val speed = when {
+                        y > size.height - edge -> (y - (size.height - edge)) / 3
+                        y < edge -> -(edge - y) / 3
+                        else -> 0f
+                    }
+                    scroll?.cancel()
+                    if (speed != 0f) scroll = launch { while (true) { grid.scrollBy(speed); delay(16) } }
+                    at(change.position)?.let { k -> pick((before + list.subList(minOf(start, k), maxOf(start, k) + 1).map { it.id }).distinct()) }
+                },
+                onDragEnd = { scroll?.cancel(); start = -1; on(false) },
+                onDragCancel = { scroll?.cancel(); start = -1; on(false) },
+            )
+        }
+    }
+
 @Composable
-private fun Act(glyph: Glyph, label: String, tint: Color = LocalTokens.current.ink, onClick: () -> Unit) {
+private fun RowScope.Act(glyph: Glyph, label: String, tint: Color = LocalTokens.current.ink, onClick: () -> Unit) {
     val t = LocalTokens.current
     Column(
-        Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 6.dp).width(60.dp),
+        Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(horizontal = 2.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         GlyphIcon(glyph, tint = tint)
@@ -463,19 +580,21 @@ private fun Act(glyph: Glyph, label: String, tint: Color = LocalTokens.current.i
     }
 }
 
-/** A save in a grid: its thumbnail, with what kind it is, and a round checkbox while picking. */
+/** A save in a grid: its thumbnail, or its video or GIF playing silently, with what kind it is, and
+ *  a round checkbox while picking. `from` names the grid, for the thumbnail that flies to the viewer. */
 @Composable
-private fun Tile(item: Saved, picking: Boolean, on: Boolean, offHome: Boolean, order: Int, modifier: Modifier, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun Tile(item: Saved, from: String, picking: Boolean, on: Boolean, offHome: Boolean, order: Int, modifier: Modifier, onClick: () -> Unit) {
     val t = LocalTokens.current
     val thumb = rememberThumb(item)
     val press = remember { MutableInteractionSource() }
     val pressed = pressScale(press)
     val shrink by animateFloatAsState(if (on && LocalMotion.current) 0.86f else 1f, snap(), label = "picked")
     Enter(order, modifier) {
-        Hero("lib${item.id}", Modifier.fillMaxWidth().aspectRatio(1f).graphicsLayer { scaleX = pressed * shrink; scaleY = pressed * shrink }, RoundedCornerShape(if (on) 22.dp else 16.dp)) {
-            Box(Modifier.fillMaxSize().background(t.soft).combinedClickable(press, null, onLongClick = onLongClick, onClick = onClick)) {
+        Hero("$from${item.id}", Modifier.fillMaxWidth().aspectRatio(1f).graphicsLayer { scaleX = pressed * shrink; scaleY = pressed * shrink }, RoundedCornerShape(if (on) 22.dp else 16.dp)) {
+            Box(Modifier.fillMaxSize().background(t.soft).clickable(press, null, onClick = onClick)) {
                 if (thumb != null) Image(thumb, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 else if (item.kind == "audio") GlyphIcon(Glyph.Music, Modifier.align(Alignment.Center), t.muted, 34.dp)
+                Loop(item, Modifier.fillMaxSize())
                 Badges(item, offHome)
                 if (picking) Box(Modifier.align(Alignment.TopEnd).padding(7.dp).size(24.dp).clip(CircleShape)
                     .background(if (on) t.pick else Color.Black.copy(alpha = 0.3f)).border(2.dp, Color.White, CircleShape), contentAlignment = Alignment.Center) {
@@ -505,13 +624,14 @@ private fun BoxScope.Badges(item: Saved, offHome: Boolean) {
 }
 
 @Composable
-private fun Empty(copy: Copy, filter: String, album: String?, query: String) {
+private fun Empty(copy: Copy, filter: String, album: String?, query: String, gallery: Boolean) {
     val (title, sub) = when {
         query.isNotBlank() -> copy.emptySearch(query.trim()) to ""
         filter == "trash" -> copy.emptyBin to ""
         filter == "fav" -> copy.emptyFav to copy.emptyFavSub
-        album != null -> copy.emptyAlbum to copy.emptyAlbumSub
+        album != null -> copy.emptyAlbum to if (gallery) "" else copy.emptyAlbumSub
         filter != "all" -> copy.emptyKind to ""
+        gallery -> copy.emptyGallery to ""
         else -> copy.emptyAll to copy.none
     }
     Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -561,11 +681,11 @@ fun NameDialog(copy: Copy, title: String, start: String, onDismiss: () -> Unit, 
 }
 
 @Composable
-fun Confirm(copy: Copy, question: String, onDismiss: () -> Unit, onYes: () -> Unit) {
+fun Confirm(copy: Copy, question: String, onDismiss: () -> Unit, yes: String = copy.delete, onYes: () -> Unit) {
     val t = LocalTokens.current
     AlertDialog(
         onDismiss,
-        confirmButton = { Pill(copy.delete, onYes) },
+        confirmButton = { Pill(yes, onYes) },
         dismissButton = { Pill(copy.cancel, onDismiss, primary = false) },
         text = { Text(question, fontFamily = Geist, fontSize = 15.sp, color = t.ink) },
         containerColor = t.surface,
@@ -573,9 +693,9 @@ fun Confirm(copy: Copy, question: String, onDismiss: () -> Unit, onYes: () -> Un
     )
 }
 
-/** Where to move files: no album, one of the albums, or a new one. */
+/** Where to move files: no album (`none`), one of the albums, shown by `label`, or a new one. */
 @Composable
-fun AlbumSheet(copy: Copy, albums: List<String>, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+fun AlbumSheet(copy: Copy, albums: List<String>, onDismiss: () -> Unit, label: (String) -> String = { it }, none: Boolean = true, onPick: (String) -> Unit) {
     val ctx = LocalContext.current
     val t = LocalTokens.current
     var naming by remember { mutableStateOf(false) }
@@ -590,14 +710,16 @@ fun AlbumSheet(copy: Copy, albums: List<String>, onDismiss: () -> Unit, onPick: 
                 GlyphIcon(glyph, tint = if (glyph == Glyph.Plus) t.accent else t.ink)
                 Text(text, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = if (glyph == Glyph.Plus) t.accent else t.ink)
             }
-            Line(Glyph.Close, copy.noAlbum) { onPick("") }
-            for (name in albums) Line(Glyph.Folder, name) { onPick(name) }
+            if (none) Line(Glyph.Close, copy.noAlbum) { onPick("") }
+            for (name in albums) Line(Glyph.Folder, label(name)) { onPick(name) }
             Line(Glyph.Plus, copy.newAlbum) { naming = true }
         }
     }
     if (naming) NameDialog(copy, copy.newAlbum, "", { naming = false }) { typed ->
         naming = false
         val clean = Library.clean(typed)
-        if (clean.isNotEmpty()) { Library.addAlbum(ctx, clean); onPick(clean) }
+        // The Gallery's albums are the phone's folders: a new one goes in Pictures.
+        if (clean.isNotEmpty() && !none) { Library.addFolder(ctx, clean); onPick("${android.os.Environment.DIRECTORY_PICTURES}/$clean/") }
+        else if (clean.isNotEmpty()) { Library.addAlbum(ctx, clean); onPick(clean) }
     }
 }

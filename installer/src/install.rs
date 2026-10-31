@@ -293,6 +293,10 @@ pub fn uninstall(dir: &Path, remove_data: bool, report: &dyn Fn(f64)) -> Result<
     remove_empty_dirs(dir, &files);
     let _ = fs::remove_dir(dir);
     win::delete_key(UNINSTALL_KEY);
+    // The app tells browsers where it is, for the extension to save into other folders.
+    for browser in [r"Software\Google\Chrome", r"Software\Microsoft\Edge", r"Software\BraveSoftware\Brave-Browser"] {
+        win::delete_key(&format!(r"{browser}\NativeMessagingHosts\{}", crate::IDENTIFIER));
+    }
 
     if remove_data {
         for root in [win::FOLDERID_RoamingAppData, win::FOLDERID_LocalAppData] {

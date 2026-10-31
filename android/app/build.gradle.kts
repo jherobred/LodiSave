@@ -72,6 +72,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.work.runtime)
+    // Google Drive backup: Android asks the user to let LodiSave reach its own files in their Drive.
+    implementation(libs.play.services.auth)
+
+    testImplementation(libs.junit)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

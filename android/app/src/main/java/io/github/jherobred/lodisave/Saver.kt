@@ -1,5 +1,6 @@
 package io.github.jherobred.lodisave
 
+import android.Manifest
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
@@ -129,10 +130,11 @@ object Saver {
 
     /**
      * Cuts a video to the part from `fromUs` to `toUs` without re-encoding, copying samples as [join]
-     * does. A copy can only start on a key frame, so it starts on the one at or before `fromUs`. False
-     * when this phone can't write the video's codecs, and nothing is written.
+     * does. A copy can only start on a key frame, so it starts on the one at or before `fromUs`.
+     * `turns` adds quarter turns clockwise to how it shows (MP4 only). False when this phone can't
+     * write the video's codecs, and nothing is written.
      */
-    fun trim(ctx: Context, src: Uri, fromUs: Long, toUs: Long, out: File, webm: Boolean): Boolean {
+    fun trim(ctx: Context, src: Uri, fromUs: Long, toUs: Long, out: File, webm: Boolean, turns: Int = 0): Boolean {
         val ex = MediaExtractor()
         var muxer: MediaMuxer? = null
         return try {
@@ -146,7 +148,8 @@ object Saver {
                 if (mime.startsWith("video/") && video < 0) {
                     video = i
                     // A phone video filmed upright says so here, and the copy has to say it too.
-                    if (format.containsKey(MediaFormat.KEY_ROTATION)) m.setOrientationHint(format.getInteger(MediaFormat.KEY_ROTATION))
+                    val rotation = (if (format.containsKey(MediaFormat.KEY_ROTATION)) format.getInteger(MediaFormat.KEY_ROTATION) else 0) + 90 * turns
+                    if (rotation % 360 != 0) m.setOrientationHint(rotation % 360)
                 } else if (!mime.startsWith("audio/")) continue
                 tracks[i] = m.addTrack(format)
             }
@@ -189,9 +192,10 @@ object Saver {
     fun mimeOf(name: String) =
         MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
 
-    /** Adds a file to Pictures, Movies or Music, in a LodiSave folder or an `album` inside it, where the gallery finds it. */
-    fun publish(ctx: Context, name: String, mime: String, album: String = "", write: (java.io.OutputStream) -> Unit): Uri {
-        val (collection, folder) = when {
+    /** Adds a file to Pictures, Movies or Music, in a LodiSave folder or an `album` inside it, where the
+     *  gallery finds it. A `folder` path like "DCIM/Camera/" puts it there instead, beside another file. */
+    fun publish(ctx: Context, name: String, mime: String, album: String = "", folder: String = "", write: (java.io.OutputStream) -> Unit): Uri {
+        val (collection, top) = when {
             mime.startsWith("image/") -> MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) to Environment.DIRECTORY_PICTURES
             mime.startsWith("audio/") -> MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) to Environment.DIRECTORY_MUSIC
             else -> MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) to Environment.DIRECTORY_MOVIES
@@ -200,7 +204,7 @@ object Saver {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, if (album.isEmpty()) "$folder/LodiSave" else "$folder/LodiSave/$album")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, folder.ifEmpty { if (album.isEmpty()) "$top/LodiSave" else "$top/LodiSave/$album" })
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val uri = resolver.insert(collection, values) ?: throw Failure("Couldn't add the file to the gallery.")
@@ -214,7 +218,7 @@ object Saver {
         return uri
     }
 
-    fun publish(ctx: Context, file: File, album: String = ""): Uri = publish(ctx, file.name, mimeOf(file.name), album) { out -> file.inputStream().use { it.copyTo(out) } }
+    fun publish(ctx: Context, file: File, album: String = "", folder: String = ""): Uri = publish(ctx, file.name, mimeOf(file.name), album, folder) { out -> file.inputStream().use { it.copyTo(out) } }
 
     /** Saves media another app shared, such as a photo it won't let you download. */
     fun publish(ctx: Context, shared: Uri): Uri {
@@ -243,7 +247,39 @@ object Saver {
      * and the albums inside them. Android lets an app read the media it created. `trash` lists the
      * trash instead, MediaStore's on Android 11 and up, LodiSave's own list on Android 10.
      */
-    fun media(ctx: Context, trash: Boolean = false): List<Saved> {
+    fun media(ctx: Context, trash: Boolean = false): List<Saved> =
+        query(ctx, trash, ROOTS.joinToString(" OR ") { "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?" }, ROOTS.map { "$it/LodiSave/%" })
+
+    /**
+     * Every photo and video on the phone, newest first, for the Gallery: the camera's, screenshots,
+     * chat apps' and LodiSave's. Without the photos and videos permission Android lists only
+     * LodiSave's own, and with "Allow limited access" only the ones the user picked.
+     */
+    fun gallery(ctx: Context, trash: Boolean = false): List<Saved> = query(
+        ctx, trash,
+        "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (${MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE}, ${MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO})",
+        emptyList(),
+    )
+
+    /** What the Gallery may show: "all", "some" (the photos the user picked, Android 14 and up) or "none". */
+    fun galleryAccess(ctx: Context): String {
+        fun has(p: String) = ctx.checkSelfPermission(p) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        return when {
+            Build.VERSION.SDK_INT >= 33 && (has(Manifest.permission.READ_MEDIA_IMAGES) || has(Manifest.permission.READ_MEDIA_VIDEO)) -> "all"
+            Build.VERSION.SDK_INT >= 34 && has(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) -> "some"
+            Build.VERSION.SDK_INT < 33 && has(Manifest.permission.READ_EXTERNAL_STORAGE) -> "all"
+            else -> "none"
+        }
+    }
+
+    /** The permissions the Gallery asks for. On Android 14 and up the user can pick some photos only. */
+    val galleryPermissions = when {
+        Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+
+    private fun query(ctx: Context, trash: Boolean, selection: String, selectionArgs: List<String>): List<Saved> {
         val path = MediaStore.MediaColumns.RELATIVE_PATH
         val cols = listOfNotNull(
             MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.SIZE,
@@ -253,8 +289,8 @@ object Saver {
             if (Build.VERSION.SDK_INT >= 30) MediaStore.MediaColumns.IS_TRASHED else null,
         ).toTypedArray()
         val args = Bundle().apply {
-            putString(ContentResolver.QUERY_ARG_SQL_SELECTION, ROOTS.joinToString(" OR ") { "$path LIKE ?" })
-            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, ROOTS.map { "$it/LodiSave/%" }.toTypedArray())
+            putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs.toTypedArray())
             putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, "${MediaStore.MediaColumns.DATE_ADDED} DESC")
             if (Build.VERSION.SDK_INT >= 30) putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, if (trash) MediaStore.MATCH_ONLY else MediaStore.MATCH_EXCLUDE)
         }

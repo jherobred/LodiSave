@@ -31,6 +31,15 @@ var LodiShared = (() => {
     return base + (suffix ? `-${suffix}` : '') + (type ? `.${type}` : '');
   }
 
-  return { isYouTube, filenameFor };
+  const extFor = (mime) => EXT[(mime || '').split(';')[0].trim()] || '';
+
+  // Bytes as base64, the way extension messages carry them.
+  function b64(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+
+  return { isYouTube, filenameFor, extFor, b64 };
 })();
 if (typeof module !== 'undefined') module.exports = LodiShared;

@@ -290,7 +290,7 @@ fn same_kind(ext: &str) -> &str {
 
 /// A file yt-dlp saved, renamed when its bytes are another type than its extension, as settle in
 /// lodi.py. "nothing" when it is a web page, which some sites send in place of the file.
-fn settle(path: PathBuf) -> Result<PathBuf, String> {
+pub fn settle(path: PathBuf) -> Result<PathBuf, String> {
     let mut head = Vec::new();
     std::fs::File::open(&path).and_then(|f| f.take(64).read_to_end(&mut head)).map_err(|e| e.to_string())?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -309,13 +309,13 @@ fn settle(path: PathBuf) -> Result<PathBuf, String> {
 }
 
 /// A file name Windows accepts, from a title.
-fn clean_name(s: &str) -> String {
+pub fn clean_name(s: &str) -> String {
     let s: String = s.chars().map(|c| if c.is_control() || r#"<>:"/\|?*"#.contains(c) { '_' } else { c }).take(70).collect();
     let s = s.trim().trim_end_matches('.').trim().to_string();
     if s.is_empty() { "lodisave".into() } else { s }
 }
 
-fn unique(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+pub fn unique(dir: &Path, stem: &str, ext: &str) -> PathBuf {
     let mut p = dir.join(format!("{stem}.{ext}"));
     let mut n = 2;
     while p.exists() {
@@ -505,7 +505,7 @@ fn page_of(url: &str) -> Option<(String, String)> {
 fn short(url: &str) -> bool {
     let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).unwrap_or("");
     ["www.facebook.com/share/", "m.facebook.com/share/", "web.facebook.com/share/", "fb.watch/", "pin.it/", "vm.tiktok.com/", "vt.tiktok.com/", "t.co/",
-     "instagram.com/share/", "www.instagram.com/share/", "threads.net/", "www.threads.net/"]
+     "instagram.com/share/", "www.instagram.com/share/", "threads.net/", "www.threads.net/", "tiktok.com/t/", "www.tiktok.com/t/", "snapchat.com/t/", "www.snapchat.com/t/"]
         .iter()
         .any(|p| rest.starts_with(p))
 }
@@ -639,11 +639,22 @@ fn story(url: &str) -> Option<Story> {
 
 /// The text in a base64 string, URL-safe or not.
 fn unbase64(s: &str) -> Option<String> {
-    const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let (mut out, mut acc, mut bits) = (Vec::new(), 0u32, 0);
+    String::from_utf8(base64(s)?).ok()
+}
+
+/// The bytes in a base64 string, URL-safe or not.
+pub fn base64(s: &str) -> Option<Vec<u8>> {
+    let (mut out, mut acc, mut bits) = (Vec::with_capacity(s.len() / 4 * 3), 0u32, 0);
     for c in s.trim_end_matches('=').bytes() {
-        let c = match c { b'-' => b'+', b'_' => b'/', c => c };
-        acc = (acc << 6) | ABC.iter().position(|&a| a == c)? as u32;
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return None,
+        };
+        acc = (acc << 6) | v as u32;
         bits += 6;
         if bits >= 8 {
             bits -= 8;
@@ -651,15 +662,30 @@ fn unbase64(s: &str) -> Option<String> {
             acc &= (1 << bits) - 1;
         }
     }
-    String::from_utf8(out).ok()
+    Some(out)
 }
 
-/// JSON from the API Instagram's website uses, which answers only a signed-in user. To a sign-in it
-/// no longer takes, it answers 401 or, for a profile, 429.
+/// A sign-in cookie of the save running on this thread, from its cookies.txt.
+fn jar_cookie(name: &str) -> Option<String> {
+    let file = COOKIES.with_borrow(Clone::clone)?;
+    std::fs::read_to_string(file).ok()?.lines().find_map(|l| {
+        let f: Vec<&str> = l.split('\t').collect();
+        (f.len() == 7 && f[5] == name).then(|| f[6].to_string())
+    })
+}
+
+/// JSON from the API Instagram's website uses, which answers only a signed-in user. It's asked the
+/// way the website asks, with the CSRF token from the sign-in's cookies, as ig_api in lodi.py. To a
+/// sign-in it no longer takes, it answers 401 or, for a profile, 429. Only reading: nothing here
+/// marks a story seen.
 fn ig_api(path: &str) -> Result<Value, String> {
     let mut c = curl(&["-w", "\n%{http_code} %{url_effective}"]);
-    for h in IG_API {
+    let ajax = ["X-Requested-With: XMLHttpRequest", "Referer: https://www.instagram.com/", "Sec-Fetch-Site: same-origin", "Sec-Fetch-Mode: cors", "Sec-Fetch-Dest: empty"];
+    for h in IG_API.into_iter().chain(ajax) {
         c.args(["-H", h]);
+    }
+    if let Some(csrf) = jar_cookie("csrftoken") {
+        c.arg("-H").arg(format!("X-CSRFToken: {csrf}"));
     }
     let out = c.arg("--").arg(format!("https://www.instagram.com/api/v1/{path}")).output().map_err(|_| "offline".to_string())?;
     let text = String::from_utf8_lossy(&out.stdout);
@@ -701,6 +727,138 @@ fn story_items((user, highlight, only): Story) -> Result<Vec<Item>, String> {
     }
     let owner = found["user"]["username"].as_str().or(user.as_deref()).unwrap_or("instagram");
     Ok(named(meta_media(&media), &format!("{owner} {}", only.or(highlight).as_deref().unwrap_or("story"))))
+}
+
+/// The JSON a page carries in <script id="...">, or Null.
+fn page_json(page: &str, id: &str) -> Value {
+    page.split(&format!(r#"<script id="{id}" type="application/json""#))
+        .nth(1)
+        .and_then(|b| b.split_once('>'))
+        .and_then(|(_, b)| b.split("</script>").next())
+        .and_then(|b| serde_json::from_str(b).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// A link's host and path, without "www.".
+fn host_path(url: &str) -> Option<(&str, &str)> {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    Some(rest.split_once('/').unwrap_or((rest, "")))
+}
+
+/// A link to a public Snapchat story: snapchat.com/add/<user>, /@<user>, story.snapchat.com/s/<user>,
+/// or a highlight's link. Spotlight videos go to yt-dlp.
+fn snap_link(url: &str) -> bool {
+    host_path(url).is_some_and(|(host, path)| matches!(host, "snapchat.com" | "story.snapchat.com") && !path.is_empty() && !path.starts_with("spotlight/") && !path.starts_with("t/"))
+}
+
+/// Every snap of a public Snapchat story, from the data its page carries: the story up now, or the
+/// highlight a link names, as snap_items in lodi.py. None when the page has no story.
+fn snap_items(url: &str) -> Option<Vec<Item>> {
+    let (page, _) = page_of(url)?;
+    let props = &page_json(&page, "__NEXT_DATA__")["props"]["pageProps"];
+    let mut stories = vec![&props["story"]];
+    stories.extend(props["curatedHighlights"].as_array().into_iter().flatten());
+    let uuid = |s: &str| s.len() == 36 && s.char_indices().all(|(i, c)| if [8, 13, 18, 23].contains(&i) { c == '-' } else { c.is_ascii_hexdigit() });
+    let named_id = url.split(['/', '?', '&', '=', '#']).find(|s| uuid(s));
+    let story = stories.iter().find(|s| named_id.is_some() && s["highlightId"]["value"].as_str() == named_id).unwrap_or(&stories[0]);
+    let found = story["snapList"].as_array().into_iter().flatten().filter_map(|s| s["snapUrls"]["mediaUrl"].as_str().map(|u| vec![u.to_string()])).collect();
+    let items = named(found, &format!("{} story", props["userProfile"]["publicProfileInfo"]["username"].as_str().unwrap_or("snapchat")));
+    (!items.is_empty()).then_some(items)
+}
+
+/// A TikTok photo post or photo story: tiktok.com/@<user>/photo/<id>.
+fn tiktok_photo(url: &str) -> bool {
+    host_path(url).is_some_and(|(host, path)| {
+        host == "tiktok.com" && matches!(path.split(['?', '#']).next().unwrap_or("").split('/').collect::<Vec<_>>().as_slice(), [user, "photo", id, ..] if user.starts_with('@') && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+    })
+}
+
+/// The photos of a TikTok photo post or story, from the data its page carries, as tiktok_photos in
+/// lodi.py: yt-dlp saves only such a post's sound. None when the page doesn't carry it.
+fn tiktok_photos(url: &str) -> Option<Vec<Item>> {
+    let (page, _) = page_of(url)?;
+    let item = &page_json(&page, "__UNIVERSAL_DATA_FOR_REHYDRATION__")["__DEFAULT_SCOPE__"]["webapp.video-detail"]["itemInfo"]["itemStruct"];
+    let found = item["imagePost"]["images"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|im| {
+            let urls: Vec<String> = im["imageURL"]["urlList"].as_array()?.iter().filter_map(|u| u.as_str().map(str::to_string)).collect();
+            (!urls.is_empty()).then_some(urls)
+        })
+        .collect();
+    let items = named(found, &format!("{} {}", item["author"]["uniqueId"].as_str().unwrap_or("tiktok"), item["id"].as_str().unwrap_or("")));
+    (!items.is_empty()).then_some(items)
+}
+
+/// The story a Facebook story link names: facebook.com/stories/<person>/<story>, the story part
+/// left out for all of the person's.
+fn fb_story(url: &str) -> Option<Option<String>> {
+    let (host, path) = host_path(url)?;
+    if !matches!(host, "facebook.com" | "m.facebook.com" | "web.facebook.com") {
+        return None;
+    }
+    match path.split(['?', '#']).next()?.split('/').collect::<Vec<_>>().as_slice() {
+        ["stories", person, rest @ ..] if !person.is_empty() && person.bytes().all(|b| b.is_ascii_digit()) => Some(rest.first().filter(|s| !s.is_empty()).map(|s| s.to_string())),
+        _ => None,
+    }
+}
+
+/// The photos and videos of a Facebook story, from the data its page carries for a signed-in
+/// browser, as fb_story_items in lodi.py. Facebook shows stories only to accounts. Only reading:
+/// nothing marks the story seen.
+fn fb_story_items(url: &str, card: Option<&str>) -> Result<Vec<Item>, String> {
+    if COOKIES.with_borrow(Option::is_none) {
+        return Err("login".into());
+    }
+    let (page, last) = page_of(url).ok_or("offline")?;
+    if last.contains("/login") {
+        return Err("login".into());
+    }
+    fn media<'a>(v: &'a Value, card: Option<&'a str>, out: &mut Vec<(Option<String>, String)>) {
+        match v {
+            Value::Object(o) => {
+                let card = if o.contains_key("story_card_info") { o.get("id").and_then(Value::as_str).or(card) } else { card };
+                let src = match o.get("__typename").and_then(Value::as_str) {
+                    Some("Video") => ["browser_native_hd_url", "playable_url_quality_hd", "browser_native_sd_url", "playable_url"].iter().find_map(|k| o.get(*k).and_then(Value::as_str)),
+                    Some("Photo") => o.get("image").and_then(|i| i.get("uri")).and_then(Value::as_str),
+                    _ => None,
+                };
+                if let Some(src) = src {
+                    out.push((card.map(str::to_string), src.to_string()));
+                }
+                o.values().for_each(|v| media(v, card, out));
+            }
+            Value::Array(a) => a.iter().for_each(|v| media(v, card, out)),
+            _ => {}
+        }
+    }
+    // Only what's under the stories the page shows, not the profile pictures and ads around them.
+    fn stories(v: &Value, out: &mut Vec<(Option<String>, String)>) {
+        match v {
+            Value::Object(o) => o.iter().for_each(|(k, v)| if k.starts_with("unified_stories") || k == "story_bucket" || k == "story_card_info" { media(v, None, out) } else { stories(v, out) }),
+            Value::Array(a) => a.iter().for_each(|v| stories(v, out)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    for blob in page.split(r#"<script type="application/json""#).skip(1).filter_map(|b| b.split_once('>').map(|(_, b)| b.split("</script>").next().unwrap_or(""))) {
+        if blob.contains("story") && (blob.contains("playable_url") || blob.contains("browser_native") || blob.contains(r#""Photo""#)) {
+            if let Ok(v) = serde_json::from_str::<Value>(blob) {
+                stories(&v, &mut found);
+            }
+        }
+    }
+    let picked: Vec<&String> = found.iter().filter(|(c, _)| card.is_none() || c.as_deref() == card).map(|(_, s)| s).collect();
+    let picked = if picked.is_empty() { found.iter().map(|(_, s)| s).collect() } else { picked };
+    let mut seen = std::collections::HashSet::new();
+    let srcs: Vec<Vec<String>> = picked.into_iter().filter(|s| seen.insert(s.as_str())).map(|s| vec![s.clone()]).collect();
+    if srcs.is_empty() {
+        // yt-dlp has no reader for Facebook stories either.
+        return Err("broken".into());
+    }
+    Ok(named(srcs, "facebook story"))
 }
 
 /// The id in a link to a post on X.
@@ -991,6 +1149,15 @@ fn save_link(app: &AppHandle, url: &str, dir: &Path) -> Result<Vec<PathBuf>, Str
     if let Some(story) = story(url) {
         return save_items(app, &story_items(story)?, url, dir);
     }
+    if let Some(card) = fb_story(url) {
+        return save_items(app, &fb_story_items(url, card.as_deref())?, url, dir);
+    }
+    if tiktok_photo(url) && let Some(items) = tiktok_photos(url) {
+        return save_items(app, &items, url, dir);
+    }
+    if snap_link(url) && let Some(items) = snap_items(url) {
+        return save_items(app, &items, url, dir);
+    }
     match site_items(url) {
         Some(items) if items.is_empty() => return Err("nothing".into()), // a post with text only
         Some(items) => return save_items(app, &items, url, dir),
@@ -1026,6 +1193,28 @@ mod tests {
         assert_eq!(super::upgrade("https://pbs.twimg.com/media/Gx1?format=png&name=small").as_deref(), Some("https://pbs.twimg.com/media/Gx1?format=png&name=orig"));
         assert_eq!(super::upgrade("https://pbs.twimg.com/media/Gx1.jpg:large").as_deref(), Some("https://pbs.twimg.com/media/Gx1?format=jpg&name=orig"));
         assert_eq!(super::clean_name(r#"a/b: "c"?. "#), "a_b_ _c__");
+    }
+
+    #[test]
+    fn story_links() {
+        assert!(super::snap_link("https://www.snapchat.com/add/kyliejenner") && super::snap_link("https://story.snapchat.com/s/someone"));
+        assert!(!super::snap_link("https://www.snapchat.com/spotlight/W7_EDlXWTBiXAEEniNoMPwAA") && !super::snap_link("https://snapchat.com/"));
+        assert!(super::tiktok_photo("https://www.tiktok.com/@a.b/photo/7300000000000000000?lang=en"));
+        assert!(!super::tiktok_photo("https://www.tiktok.com/@a.b/video/7300000000000000000"));
+        assert_eq!(super::fb_story("https://www.facebook.com/stories/123456/UzpfSVNDOjE=/?view_single=true"), Some(Some("UzpfSVNDOjE=".into())));
+        assert_eq!(super::fb_story("https://m.facebook.com/stories/123456/"), Some(None));
+        assert_eq!(super::fb_story("https://www.facebook.com/someone/posts/1"), None);
+        assert!(super::short("https://snapchat.com/t/AbCd") && super::short("https://www.tiktok.com/t/ZT8abc/"));
+        let page = r#"<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"story":{"snapList":[{"snapUrls":{"mediaUrl":"https://cf-st.sc-cdn.net/d/a"}}]}}}}</script>"#;
+        assert_eq!(super::page_json(page, "__NEXT_DATA__")["props"]["pageProps"]["story"]["snapList"][0]["snapUrls"]["mediaUrl"], "https://cf-st.sc-cdn.net/d/a");
+    }
+
+    /// Reads a real public Snapchat story. `cargo test -- --ignored`, with a network.
+    #[test]
+    #[ignore]
+    fn snapchat_story_online() {
+        let items = super::snap_items("https://www.snapchat.com/add/kyliejenner").expect("a public story");
+        assert!(items.iter().all(|i| i.srcs[0].starts_with("https://")), "{items:?}");
     }
 
     #[test]

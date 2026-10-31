@@ -297,6 +297,65 @@ await check('G4 Full-size URL falls back to the page copy', 'service worker', as
   return `${same(r, original('a.jpg'))} after the original 404ed`;
 });
 
+// The LodiSave app (app/src/host.rs) saves into folders the user chose. Browsers find it in the
+// registry, so for this check Edge is pointed at this checkout's app build, and whatever was there
+// before is put back.
+await check('Save into a chosen folder through the LodiSave app', 'native host', async () => {
+  const exe = path.resolve(here, '../app/target/release/lodisave.exe');
+  if (!fs.existsSync(exe)) throw new Error('build the app first: cargo build --release --manifest-path app/Cargo.toml');
+  const key = String.raw`HKCU\Software\Microsoft\Edge\NativeMessagingHosts\io.github.jherobred.lodisave`;
+  const before = /REG_SZ\s+(.+)/.exec(spawnSync('reg', ['query', key, '/ve'], { encoding: 'utf8' }).stdout || '')?.[1].trim();
+  const manifest = path.join(tmp, 'native-host.json'), dir = path.join(tmp, 'Chosen folder');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(manifest, JSON.stringify({ name: 'io.github.jherobred.lodisave', description: 'test', path: exe, type: 'stdio', allowed_origins: [`chrome-extension://${extId}/`] }));
+  execFileSync('reg', ['add', key, '/ve', '/t', 'REG_SZ', '/d', manifest, '/f'], { stdio: 'ignore' });
+  try {
+    const into = (tabId, it) => sw.evaluate(([id, item, d]) => self.lodi.save(id, item, d), [tabId, it, dir]);
+    const { page, tabId } = await open('mse');
+    const video = await into(tabId, find(await scan(tabId), (i) => i.via === 'mse', 'MediaSource stream'));
+    await page.close();
+    const photo = await into(1, { url: `${PAGE}/noext/a`, kind: 'image', via: 'img', page: `${PAGE}/` });
+    const guarded = await into(1, { url: `${PAGE}/hotlink/a.jpg`, kind: 'image', via: 'img', page: `${PAGE}/hotlink.html` });
+    const page2 = await into(1, { url: `${PAGE}/misc.html`, kind: 'video', via: 'meta', page: `${PAGE}/` });
+    for (const r of [video, photo, guarded]) if (r.ok && path.dirname(r.filename) !== dir) throw new Error(`saved to ${r.filename}`);
+    if (!/web page/.test(page2.error || '')) throw new Error(`a web page was saved: ${JSON.stringify(page2)}`);
+    if (fs.readdirSync(dir).length !== 3) throw new Error(`the folder holds ${fs.readdirSync(dir).join(', ')}`);
+    // Save to: One folder sends every pick there without asking.
+    const plan = await sw.evaluate(async (d) => {
+      await chrome.storage.local.set({ saveTo: 'fixed', fixedDir: d });
+      const p = await self.lodi.foldersFor([{ url: 'https://a.test/1.jpg' }, { url: 'https://a.test/2.jpg' }]);
+      await chrome.storage.local.set({ saveTo: 'downloads' });
+      return p;
+    }, dir);
+    if (plan.dirs?.join() !== [dir, dir].join()) throw new Error(`One folder planned ${JSON.stringify(plan)}`);
+    // Save to: Ask for each lists the picks in the bar, each with its folder, then saves each there.
+    const other = path.join(tmp, 'Other folder');
+    fs.mkdirSync(other);
+    await sw.evaluate(([d, o]) => chrome.storage.local.set({ saveTo: 'each', lastDir: d, dirs: [d, o] }), [dir, other]);
+    const { page: pick } = await open('picker');
+    for (const sel of ['#one img', '#two img']) {
+      const b = await pick.locator(sel).boundingBox();
+      await pick.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 4 });
+      await pick.locator('lodisave-picker .check:not(.on)').click({ delay: 150 });
+      await pick.locator('lodisave-picker .check.on').first().waitFor({ timeout: 3000 });
+    }
+    await pick.locator('lodisave-picker .bar .save').click();
+    const rows = pick.locator('lodisave-picker .route .row');
+    await rows.nth(1).waitFor({ timeout: 5000 });
+    await rows.nth(1).locator('select').selectOption(other);
+    await pick.locator('lodisave-picker .route .go').click();
+    await pick.waitForFunction(() => document.querySelector('lodisave-picker')?.dataset.state === 'done', null, { timeout: 20000 });
+    await pick.close();
+    await sw.evaluate(() => chrome.storage.local.set({ saveTo: 'downloads' }));
+    const counts = [dir, other].map((d) => fs.readdirSync(d).length);
+    if (counts.join() !== '4,1') throw new Error(`the folders hold ${counts.join(' and ')} files, expected 4 and 1`);
+    return `MediaSource capture ${same(video, original('clip.webm'))}, ${same(photo, original('a.jpg'))} named ${path.basename(photo.filename)}, Referer-guarded photo saved, web page refused, Ask for each sent 2 picks to 2 folders`;
+  } finally {
+    if (before) execFileSync('reg', ['add', key, '/ve', '/t', 'REG_SZ', '/d', before, '/f'], { stdio: 'ignore' });
+    else spawnSync('reg', ['delete', key, '/f'], { stdio: 'ignore' });
+  }
+});
+
 {
   const { page, tabId } = await open('misc');
   await check('Finder coverage', 'popup scan', async () => {

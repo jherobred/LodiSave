@@ -211,6 +211,7 @@ enum class Glyph(d: String, val fill: Boolean = false) {
     Info("M21 12A9 9 0 1 1 3 12A9 9 0 1 1 21 12ZM12 11V16.5M12 7.6V7.5"),
     Folder("M3 7.5V17.5C3 18.6 3.9 19.5 5 19.5H19C20.1 19.5 21 18.6 21 17.5V9.5C21 8.4 20.1 7.5 19 7.5H12L10 5H5C3.9 5 3 5.9 3 7V7.5Z"),
     Plus("M12 5V19M5 12H19"),
+    Minus("M5 12H19"),
     Check("M5 12.5L10 17.5L19 7"),
     Play("M8 5.5V18.5L19 12Z", fill = true),
     Pause("M7 5H10.5V19H7ZM13.5 5H17V19H13.5Z", fill = true),
@@ -220,7 +221,12 @@ enum class Glyph(d: String, val fill: Boolean = false) {
     Open("M14 4H20V10M20 4L11 13M18 14V18.5C18 19.3 17.3 20 16.5 20H5.5C4.7 20 4 19.3 4 18.5V7.5C4 6.7 4.7 6 5.5 6H10"),
     Music("M9 18V5.5L20 3.5V16M9 18A3 3 0 1 1 3 18A3 3 0 1 1 9 18ZM20 16A3 3 0 1 1 14 16A3 3 0 1 1 20 16Z"),
     Lock("M7.5 11V8A4.5 4.5 0 0 1 16.5 8V11M5.5 11H18.5V20.5H5.5ZM12 14.5V17"),
-    Link("M10 14L14 10M8.6 11.4L6.8 13.2A3.5 3.5 0 0 0 11.8 18.2L13.6 16.4M15.4 12.6L17.2 10.8A3.5 3.5 0 0 0 12.2 5.8L10.4 7.6");
+    Link("M10 14L14 10M8.6 11.4L6.8 13.2A3.5 3.5 0 0 0 11.8 18.2L13.6 16.4M15.4 12.6L17.2 10.8A3.5 3.5 0 0 0 12.2 5.8L10.4 7.6"),
+    Home("M4 10.5L12 4L20 10.5V19C20 19.6 19.6 20 19 20H15V14.5H9V20H5C4.4 20 4 19.6 4 19Z"),
+    Saves("M12 4V14M7.5 9.5L12 14L16.5 9.5M5 17.5V19C5 19.6 5.4 20 6 20H18C18.6 20 19 19.6 19 19V17.5"),
+    Photos("M5 4.5H19C19.8 4.5 20.5 5.2 20.5 6V18C20.5 18.8 19.8 19.5 19 19.5H5C4.2 19.5 3.5 18.8 3.5 18V6C3.5 5.2 4.2 4.5 5 4.5ZM3.5 15.5L8.5 10.5L13 15L15.5 12.5L20.5 17.5M16.5 8.5A1 1 0 1 1 16.5 8.49"),
+    Cloud("M7 18.5H17.5A4 4 0 0 0 18 10.5A6 6 0 0 0 6.5 9.5A4.5 4.5 0 0 0 7 18.5ZM12 11V16M9.5 13.5L12 11L14.5 13.5"),
+    Person("M16 8A4 4 0 1 1 8 8A4 4 0 1 1 16 8ZM4.5 20C5.4 16.6 8.4 14.5 12 14.5C15.6 14.5 18.6 16.6 19.5 20");
 
     val path = PathParser().parsePathString(d).toPath()
 }
@@ -306,7 +312,7 @@ fun look(job: Job, copy: Copy, link: String): Look = when (job) {
         },
         job.names.joinToString(", "), mono = true,
     )
-    is Job.Failed -> copy.error(job.code, Site.of(link)?.label).let { (title, sub) -> Look(Pose.Oops, title, sub) }
+    is Job.Failed -> Site.of(link).let { site -> copy.error(job.code, site?.label, site?.signedIn() == true) }.let { (title, sub) -> Look(Pose.Oops, title, sub) }
     is Job.Choose -> Look(Pose.Grab, copy.pickTitle, copy.pickSub(job.kinds.size))
 }
 

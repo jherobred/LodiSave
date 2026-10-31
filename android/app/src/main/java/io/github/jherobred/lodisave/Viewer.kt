@@ -1,5 +1,10 @@
 package io.github.jherobred.lodisave
 
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.runtime.key
+import android.view.TextureView
 import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
@@ -118,10 +123,11 @@ private val Glass = Color.White.copy(alpha = 0.14f)
 
 /**
  * One save at a time, full screen: swipe between them, pinch or double-tap to zoom photos, play
- * videos, GIFs and audio, and act on the one showing. Photos and videos open in an editor that
- * saves a copy. `ids` are the saves to page through, looked up in `all`; `trash` pages through the
- * trash. Thumbnails grow from and fly back to the grid it opened `from`, and `onSeen` hears which
- * save shows, for that grid to have it in view.
+ * videos, GIFs and audio, turn any of them, and act on the one showing. Photos and videos open in an
+ * editor that saves a copy. `ids` are the saves to page through, looked up in `all`; `trash` pages
+ * through the trash. Thumbnails grow from and fly back to the grid it opened `from` ("gal" is the
+ * Gallery, whose albums are the phone's folders), and `onSeen` hears which save shows, for that grid
+ * to have it in view. A swipe down closes it.
  */
 @Composable
 fun Viewer(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: String, all: Map<Long, Saved>, albums: List<String>, onSeen: (Long) -> Unit, onBack: () -> Unit) =
@@ -134,6 +140,8 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
     val t = LocalTokens.current
     val motion = LocalMotion.current
     val scope = rememberCoroutineScope()
+    val gallery = from == "gal"
+    val folder = { album: String -> if (gallery) Library.folderName(album) else album }
     val ids = remember { start.toMutableStateList() }
     val items = ids.mapNotNull { all[it] }.filter { it.trashed == trash }
     val pager = rememberPagerState(at.coerceIn(0, (items.size - 1).coerceAtLeast(0))) { items.size }
@@ -147,6 +155,14 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
     var editing by remember { mutableStateOf<Saved?>(null) }
     var edited by remember { mutableStateOf<Saved?>(null) } // still shows while the editor slides away
     var show by remember { mutableStateOf<Long?>(null) } // a saved copy to turn to once it loads
+    var sounds by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+    // Quarter turns of the one showing, clockwise. Only for the look: turning to another page or
+    // leaving puts it back, unless it's saved.
+    var turns by remember { mutableIntStateOf(0) }
+    LaunchedEffect(pager.currentPage) { turns = 0 }
+    // How far a swipe down has pulled the page, which closes the viewer past a point.
+    val pull = remember { Animatable(0f) }
     val snack = remember { SnackbarHostState() }
     val hidden = remember(Library.changes) { Prefs(ctx).hiddenFromHome }
     // Video and GIFs start once the thumbnail has grown into place, and stop as it flies back.
@@ -172,61 +188,105 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
         val r = snack.showSnackbar(message, undo?.let { copy.undo }, duration = SnackbarDuration.Short)
         if (r == SnackbarResult.ActionPerformed) undo?.invoke()
     }
+    // A copy turned the way it shows, beside the original, which the viewer then turns to.
+    fun saveTurned(it: Saved) {
+        saving = true
+        scope.launch {
+            val id = withContext(Dispatchers.IO) { runCatching { turnedCopy(ctx, it, turns) }.getOrNull() }
+            saving = false
+            if (id == null) return@launch android.widget.Toast.makeText(ctx, copy.cantEdit, android.widget.Toast.LENGTH_SHORT).show()
+            Library.changed()
+            ids.add(ids.indexOf(it.id) + 1, id)
+            show = id
+            done(copy.savedCopy)
+        }
+    }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        HorizontalPager(pager, Modifier.fillMaxSize(), pageSpacing = 16.dp, key = { items[it].id }) { page ->
+    val far = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toFloat().coerceAtLeast(1f)
+    val pulled = (pull.value / far).coerceIn(0f, 1f)
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 1f - pulled * 1.4f))
+            // A swipe down on a photo at its normal size, a video or a GIF closes the viewer. A zoomed
+            // photo keeps the swipe to move around.
+            .pointerInput(editing == null) {
+                if (editing != null) return@pointerInput
+                detectVerticalDragGestures(
+                    onDragEnd = { if (pull.value > far / 7) onBack() else scope.launch { pull.animateTo(0f, snap()) } },
+                    onDragCancel = { scope.launch { pull.animateTo(0f, snap()) } },
+                ) { change, dy ->
+                    change.consume()
+                    scope.launch { pull.snapTo((pull.value + dy).coerceAtLeast(0f)) }
+                }
+            },
+    ) {
+        HorizontalPager(
+            pager, Modifier.fillMaxSize().graphicsLayer { translationY = pull.value; scaleX = 1f - pulled * 0.3f; scaleY = 1f - pulled * 0.3f },
+            pageSpacing = 16.dp, key = { items[it].id },
+        ) { page ->
             val shown = items[page]
             val toggle = { chrome = !chrome }
             val hero = "$from${shown.id}"
+            val turn = if (page == pager.currentPage) turns else 0
             when (shown.kind) {
-                "photo" -> Photo(shown, hero, toggle)
-                "gif" -> Gif(shown, hero, settled, toggle)
-                else -> Player(copy, shown, hero, settled && page == pager.settledPage, chrome, toggle)
+                "photo" -> Photo(shown, hero, turn, toggle)
+                "gif" -> Gif(shown, hero, settled, turn, toggle)
+                else -> Player(copy, shown, hero, settled && page == pager.settledPage, chrome && pull.value == 0f, turn, toggle)
             }
         }
 
         val enter = if (motion) fadeIn() else EnterTransition.None
         val exit = if (motion) fadeOut() else ExitTransition.None
-        AnimatedVisibility(chrome && item != null, Modifier.align(Alignment.TopCenter), enter = enter, exit = exit) {
-            Row(
-                Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Scrim, Color.Transparent))).statusBarsPadding().padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RoundButton(Glyph.Back, copy.back, onBack, tint = Color.White, fill = Glass)
-                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                    Text(item?.name.orEmpty(), color = Color.White, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${pager.currentPage + 1} / ${items.size}", color = Color.White.copy(alpha = 0.7f), fontFamily = GeistMono, fontSize = 12.sp)
+        AnimatedVisibility(chrome && item != null && pull.value == 0f, Modifier.align(Alignment.TopCenter), enter = enter, exit = exit) {
+            Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Scrim, Color.Transparent))).statusBarsPadding().padding(vertical = 12.dp)) {
+                Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RoundButton(Glyph.Back, copy.back, onBack, tint = Color.White, fill = Glass)
+                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                        Text(item?.name.orEmpty(), color = Color.White, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${pager.currentPage + 1} / ${items.size}", color = Color.White.copy(alpha = 0.7f), fontFamily = GeistMono, fontSize = 12.sp)
+                    }
+                    // Other videos' and songs' sound, playing behind this one.
+                    RoundButton(Glyph.Music, copy.sounds, { sounds = true }, tint = if (Sounds.tracks.isEmpty()) Color.White else Dark.accent, fill = Glass)
+                    Spacer(Modifier.width(8.dp))
+                    RoundButton(Glyph.Info, copy.info, { info = true }, tint = Color.White, fill = Glass)
                 }
-                RoundButton(Glyph.Info, copy.info, { info = true }, tint = Color.White, fill = Glass)
+                if (Sounds.tracks.isNotEmpty()) SoundStrip(copy, { sounds = true }, Modifier.padding(top = 10.dp), dark = true)
             }
         }
-        AnimatedVisibility(chrome && item != null, Modifier.align(Alignment.BottomCenter), enter = enter, exit = exit) {
+        AnimatedVisibility(chrome && item != null && pull.value == 0f, Modifier.align(Alignment.BottomCenter), enter = enter, exit = exit) {
             val it = item ?: return@AnimatedVisibility
-            Row(
-                Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Scrim))).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (it.trashed) {
-                    RoundButton(Glyph.Restore, copy.restore, { scope.launch { Library.each(listOf(it)) { s -> Library.trash(ctx, s, false) }; done(copy.restored(1)) } }, tint = Color.White, fill = Glass)
-                    RoundButton(Glyph.Trash, copy.deleteForever, { asking = true }, tint = Dark.bad, fill = Glass)
-                } else {
-                    RoundButton(Glyph.Share, copy.share, { share(ctx, listOf(it)) }, tint = Color.White, fill = Glass)
-                    RoundButton(if (it.favorite) Glyph.HeartFull else Glyph.Heart, if (it.favorite) copy.unfavorite else copy.favorite,
-                        { scope.launch { Library.each(listOf(it)) { s -> Library.favorite(ctx, s, !it.favorite) } } }, tint = if (it.favorite) Dark.accent else Color.White, fill = Glass)
-                    if (it.kind == "photo" || it.kind == "video") RoundButton(Glyph.Edit, copy.edit, { editing = it; edited = it }, tint = Color.White, fill = Glass)
-                    RoundButton(Glyph.Trash, copy.delete, { trashWithUndo(scope, ctx, copy, listOf(it), ::done) }, tint = Color.White, fill = Glass)
-                    Box {
-                        RoundButton(Glyph.More, copy.more, { more = true }, tint = Color.White, fill = Glass)
-                        DropdownMenu(more, { more = false }, containerColor = t.surface) {
-                            @Composable
-                            fun Choice(glyph: Glyph, label: String, onClick: () -> Unit) = DropdownMenuItem(
-                                { Text(label, fontFamily = Geist, color = t.ink) }, { more = false; onClick() }, leadingIcon = { GlyphIcon(glyph, size = 20.dp) },
-                            )
-                            Choice(Glyph.Open, copy.openWith) { openSaved(ctx, it.uri, it.mime, choose = true) }
-                            Choice(Glyph.Edit, copy.rename) { naming = true }
-                            Choice(Glyph.Folder, copy.moveTo) { moving = true }
-                            val off = "${it.id}" in hidden
-                            Choice(if (off) Glyph.Eye else Glyph.EyeOff, if (off) copy.showOnHome else copy.hideFromHome) { Library.hide(ctx, listOf(it), !off) }
+            Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Scrim))).navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
+                // Turned: keep it that way as a copy, or leave it, and it turns back.
+                if (turns != 0 && !it.trashed) {
+                    if (saving) Meter(-1f, Modifier.width(120.dp).padding(bottom = 4.dp))
+                    else Pill(copy.saveTurned, { saveTurned(it) }, Modifier.padding(bottom = 4.dp))
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                    if (it.trashed) {
+                        RoundButton(Glyph.Restore, copy.restore, { scope.launch { Library.each(listOf(it)) { s -> Library.trash(ctx, s, false) }; done(copy.restored(1)) } }, tint = Color.White, fill = Glass)
+                        RoundButton(Glyph.Trash, copy.deleteForever, { asking = true }, tint = Dark.bad, fill = Glass)
+                    } else {
+                        RoundButton(Glyph.Share, copy.share, { share(ctx, listOf(it)) }, tint = Color.White, fill = Glass)
+                        RoundButton(if (it.favorite) Glyph.HeartFull else Glyph.Heart, if (it.favorite) copy.unfavorite else copy.favorite,
+                            { scope.launch { Library.each(listOf(it)) { s -> Library.favorite(ctx, s, !it.favorite) } } }, tint = if (it.favorite) Dark.accent else Color.White, fill = Glass)
+                        if (it.kind != "audio") RoundButton(Glyph.Rotate, copy.rotate, { turns = (turns + 1) % 4 }, tint = if (turns != 0) Dark.accent else Color.White, fill = Glass)
+                        if (it.kind == "photo" || it.kind == "video") RoundButton(Glyph.Edit, copy.edit, { editing = it; edited = it }, tint = Color.White, fill = Glass)
+                        RoundButton(Glyph.Trash, copy.delete, { trashWithUndo(scope, ctx, copy, listOf(it), ::done) }, tint = Color.White, fill = Glass)
+                        Box {
+                            RoundButton(Glyph.More, copy.more, { more = true }, tint = Color.White, fill = Glass)
+                            DropdownMenu(more, { more = false }, containerColor = t.surface) {
+                                @Composable
+                                fun Choice(glyph: Glyph, label: String, onClick: () -> Unit) = DropdownMenuItem(
+                                    { Text(label, fontFamily = Geist, color = t.ink) }, { more = false; onClick() }, leadingIcon = { GlyphIcon(glyph, size = 20.dp) },
+                                )
+                                Choice(Glyph.Open, copy.openWith) { openSaved(ctx, it.uri, it.mime, choose = true) }
+                                Choice(Glyph.Edit, copy.rename) { naming = true }
+                                Choice(Glyph.Folder, copy.moveTo) { moving = true }
+                                // Home shows LodiSave's own saves only.
+                                if (it.path.contains("/LodiSave/")) {
+                                    val off = "${it.id}" in hidden
+                                    Choice(if (off) Glyph.Eye else Glyph.EyeOff, if (off) copy.showOnHome else copy.hideFromHome) { Library.hide(ctx, listOf(it), !off) }
+                                }
+                            }
                         }
                     }
                 }
@@ -253,6 +313,7 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
         }
     }
 
+    if (sounds) SoundPicker(copy, remember(all) { all.values.filter { !it.trashed && (it.kind == "video" || it.kind == "audio") }.sortedByDescending { it.added } }) { sounds = false }
     if (info) item?.let { InfoSheet(copy, it) { info = false } }
     if (naming) item?.let { it ->
         NameDialog(copy, copy.rename, it.name.substringBeforeLast('.'), { naming = false }, hint = copy.infoName) { typed ->
@@ -262,9 +323,12 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
         }
     }
     if (moving) item?.let { it ->
-        AlbumSheet(copy, albums, { moving = false }) { to ->
+        AlbumSheet(copy, albums, { moving = false }, folder, none = !gallery) { to ->
             moving = false
-            scope.launch { done(if (Library.each(listOf(it)) { s -> Library.move(ctx, s, to) } > 0) copy.notDone(1) else copy.moved(1, to.ifEmpty { copy.noAlbum })) }
+            scope.launch {
+                val failed = Library.each(listOf(it)) { s -> if (gallery) Library.moveTo(ctx, s, to) else Library.move(ctx, s, to) }
+                done(if (failed > 0) copy.notDone(1) else copy.moved(1, if (to.isEmpty()) copy.noAlbum else folder(to)))
+            }
         }
     }
     if (asking) item?.let { it ->
@@ -290,15 +354,26 @@ private fun decode(ctx: Context, uri: Uri, max: Int, editable: Boolean = false):
         if (editable) d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
     }
 
+/** Content turned by quarter turns clockwise, filling its box: turned sideways, it's laid out at the
+ *  box's height by its width before it turns. */
+@Composable
+private fun Turned(turn: Int, content: @Composable () -> Unit) = BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    val side = turn % 2 == 1
+    Box(Modifier.requiredSize(if (side) maxHeight else maxWidth, if (side) maxWidth else maxHeight).graphicsLayer { rotationZ = 90f * turn }) { content() }
+}
+
+/** Width over height once turned by `turn` quarter turns. */
+private fun turnedRatio(ratio: Float, turn: Int) = if (turn % 2 == 1) 1f / ratio else ratio
+
 /** A photo that pinches and double-taps to zoom, and pans while zoomed. At 1x a swipe turns the page. */
 @Composable
-private fun Photo(item: Saved, hero: String, onTap: () -> Unit) {
+private fun Photo(item: Saved, hero: String, turn: Int, onTap: () -> Unit) {
     val ctx = LocalContext.current
     val thumb = rememberThumb(item)
     val full by produceState<ImageBitmap?>(null, item.id) {
         value = withContext(Dispatchers.IO) { runCatching { decode(ctx, item.uri, 2560).asImageBitmap() }.getOrNull() }
     }
-    val ratio = ratioOf(item, full ?: thumb)
+    val ratio = turnedRatio(ratioOf(item, full ?: thumb), turn)
     val scope = rememberCoroutineScope()
     val zoom = remember { Animatable(1f) }
     val pan = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
@@ -346,14 +421,14 @@ private fun Photo(item: Saved, hero: String, onTap: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Hero(hero, Modifier.aspectRatio(ratio).graphicsLayer { scaleX = zoom.value; scaleY = zoom.value; translationX = pan.value.x; translationY = pan.value.y }) {
-            (full ?: thumb)?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            Turned(turn) { (full ?: thumb)?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
         }
     }
 }
 
 /** A GIF, playing once it's in place. Android draws its frames itself. */
 @Composable
-private fun Gif(item: Saved, hero: String, settled: Boolean, onTap: () -> Unit) {
+private fun Gif(item: Saved, hero: String, settled: Boolean, turn: Int, onTap: () -> Unit) {
     val ctx = LocalContext.current
     val thumb = rememberThumb(item)
     val drawable by produceState<Drawable?>(null, item.id) {
@@ -361,55 +436,68 @@ private fun Gif(item: Saved, hero: String, settled: Boolean, onTap: () -> Unit) 
     }
     DisposableEffect(drawable) { onDispose { (drawable as? AnimatedImageDrawable)?.stop() } }
     Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onTap() } }, contentAlignment = Alignment.Center) {
-        Hero(hero, Modifier.aspectRatio(ratioOf(item, thumb))) {
-            thumb?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-            val d = drawable
-            if (d != null && settled) AndroidView({ ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_XY } }, Modifier.fillMaxSize()) { v ->
-                v.setImageDrawable(d)
-                (d as? AnimatedImageDrawable)?.start()
+        Hero(hero, Modifier.aspectRatio(turnedRatio(ratioOf(item, thumb), turn))) {
+            Turned(turn) {
+                thumb?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                val d = drawable
+                if (d != null && settled) AndroidView({ ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_XY } }, Modifier.fillMaxSize()) { v ->
+                    v.setImageDrawable(d)
+                    (d as? AnimatedImageDrawable)?.start()
+                }
             }
         }
     }
 }
 
-/** A video or audio file, playing while it's the page in front, with play, pause and a seek bar. */
+/** A video or audio file, playing while it's the page in front, with play, pause and a seek bar. A
+ *  video draws on a TextureView, which can turn with the page, where a SurfaceView can't. */
 @Composable
-private fun Player(copy: Copy, item: Saved, hero: String, active: Boolean, chrome: Boolean, onTap: () -> Unit) {
+private fun Player(copy: Copy, item: Saved, hero: String, active: Boolean, chrome: Boolean, turn: Int, onTap: () -> Unit) {
+    val ctx = LocalContext.current
     val t = LocalTokens.current
     val thumb = rememberThumb(item)
-    var view by remember { mutableStateOf<VideoView?>(null) }
+    var mp by remember { mutableStateOf<MediaPlayer?>(null) }
     var drawn by remember { mutableStateOf(false) }
     var playing by remember { mutableStateOf(false) }
     var position by remember { mutableLongStateOf(0L) }
     var length by remember { mutableLongStateOf(item.duration) }
     val video = item.kind == "video"
-    LaunchedEffect(view) {
-        val v = view ?: return@LaunchedEffect
+    LaunchedEffect(mp) {
+        val p = mp ?: return@LaunchedEffect
         while (true) {
-            position = v.currentPosition.toLong()
-            playing = v.isPlaying
+            runCatching { position = p.currentPosition.toLong(); playing = p.isPlaying }
             delay(200)
         }
     }
     LaunchedEffect(active) { if (!active) drawn = false }
-    val player: @Composable (Modifier) -> Unit = { modifier ->
-        if (active) AndroidView(
-            { c ->
-                VideoView(c).apply {
-                    setOnPreparedListener { mp -> mp.isLooping = true; length = mp.duration.toLong(); start() }
-                    setOnInfoListener { _, what, _ -> if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) drawn = true; false }
-                    setVideoURI(item.uri)
-                    view = this
-                }
-            },
-            modifier, onRelease = { it.stopPlayback(); view = null },
-        )
+    // Plays while it's the page in front, with the sound in focus as a video app's would be. The
+    // background sounds keep playing beside it.
+    val player = remember(item.id, active) { if (active) MediaPlayer() else null }
+    DisposableEffect(player) {
+        val p = player ?: return@DisposableEffect onDispose {}
+        val audio = ctx.getSystemService(android.media.AudioManager::class.java)
+        val focus = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN).build()
+        p.runCatching {
+            setDataSource(ctx, item.uri)
+            isLooping = true
+            setOnPreparedListener { length = it.duration.toLong(); audio.requestAudioFocus(focus); it.start(); mp = it }
+            prepareAsync()
+        }
+        onDispose {
+            mp = null
+            p.release()
+            audio.abandonAudioFocusRequest(focus)
+        }
     }
     Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onTap() } }, contentAlignment = Alignment.Center) {
-        if (video) Hero(hero, Modifier.aspectRatio(ratioOf(item, thumb))) {
-            player(Modifier.fillMaxSize())
-            // The thumbnail covers the video until its first frame is drawn.
-            if (!drawn) thumb?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        if (video) Hero(hero, Modifier.aspectRatio(turnedRatio(ratioOf(item, thumb), turn))) {
+            Turned(turn) {
+                if (player != null) key(player) {
+                    AndroidView({ c -> TextureView(c).apply { surfaceTextureListener = VideoSurface(player) { drawn = true } } }, Modifier.fillMaxSize())
+                }
+                // The thumbnail covers the video until its first frame is drawn.
+                if (!drawn) thumb?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            }
         } else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Hero(hero, Modifier.size(220.dp), RoundedCornerShape(36.dp)) {
                 Box(Modifier.fillMaxSize().background(t.surface), contentAlignment = Alignment.Center) {
@@ -417,18 +505,72 @@ private fun Player(copy: Copy, item: Saved, hero: String, active: Boolean, chrom
                 }
             }
             Text(item.name, Modifier.padding(horizontal = 32.dp), color = Color.White, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            // Audio needs no picture, only the player.
-            player(Modifier.size(1.dp))
         }
         AnimatedVisibility(chrome && active, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 80.dp), enter = fadeIn(), exit = fadeOut()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 RoundButton(if (playing) Glyph.Pause else Glyph.Play, if (playing) copy.pause else copy.play,
-                    { view?.let { if (it.isPlaying) it.pause() else it.start() } }, tint = Color.White, fill = Glass, size = 40.dp)
+                    { mp?.let { if (it.isPlaying) it.pause() else it.start() } }, tint = Color.White, fill = Glass, size = 40.dp)
                 Slider(
-                    if (length > 0) position.toFloat() / length else 0f, { f -> position = (f * length).toLong(); view?.seekTo(position.toInt()) },
+                    if (length > 0) position.toFloat() / length else 0f, { f -> position = (f * length).toLong(); mp?.seekTo(position.toInt()) },
                     Modifier.weight(1f), colors = SliderDefaults.colors(thumbColor = Dark.accent, activeTrackColor = Dark.accent, inactiveTrackColor = Color.White.copy(alpha = 0.3f)),
                 )
                 Text("${clock(position)} / ${clock(length)}", color = Color.White, fontFamily = GeistMono, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/** Hands a TextureView's surface to a player, and says when the first frame is drawn on it. */
+private class VideoSurface(val player: MediaPlayer, val onDrawn: () -> Unit) : TextureView.SurfaceTextureListener {
+    private var surface: android.view.Surface? = null
+
+    override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, width: Int, height: Int) {
+        surface = android.view.Surface(st).also { s -> runCatching { player.setSurface(s) } }
+    }
+
+    override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, width: Int, height: Int) {}
+
+    override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
+        runCatching { player.setSurface(null) } // already released when the page went away first
+        surface?.release()
+        surface = null
+        return true
+    }
+
+    override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) = onDrawn()
+}
+
+/**
+ * A copy of `item` turned by quarter turns, beside the original in its own folder: a photo drawn
+ * again, a video's samples copied with a new rotation (no re-encoding), a GIF's frames turned pixel
+ * for pixel. Its MediaStore id, or null when this phone can't write it (a WebM can't carry a rotation).
+ */
+private fun turnedCopy(ctx: Context, item: Saved, turns: Int): Long? {
+    val stem = "${item.name.substringBeforeLast('.')} (turned)"
+    // Beside the original, or in LodiSave's folder when Android keeps new files out of that one (a chat app's).
+    fun put(name: String, mime: String, write: (java.io.OutputStream) -> Unit) = ContentUris.parseId(
+        try { Saver.publish(ctx, name, mime, folder = item.path, write = write) } catch (e: IllegalArgumentException) { Saver.publish(ctx, name, mime, write = write) },
+    )
+    return when (item.kind) {
+        "photo" -> {
+            // ponytail: 4096 px a side at most, which keeps a big photo's copy from running out of memory
+            val png = item.mime == "image/png"
+            val out = turned(decode(ctx, item.uri, 4096, editable = true), turns, false)
+            put("$stem.${if (png) "png" else "jpg"}", if (png) "image/png" else "image/jpeg") { out.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, 95, it) }
+        }
+        "gif" -> {
+            val bytes = ctx.contentResolver.openInputStream(item.uri)?.use { it.readBytes() } ?: return null
+            val turned = GifTurn.turn(bytes, turns) ?: return null
+            put("$stem.gif", "image/gif") { it.write(turned) }
+        }
+        else -> {
+            if (item.mime == "video/webm") return null
+            val out = File(ctx.cacheDir, "turn-${item.id}").apply { mkdirs() }.resolve("$stem.mp4")
+            try {
+                if (!Saver.trim(ctx, item.uri, 0, Long.MAX_VALUE, out, webm = false, turns = turns)) null
+                else put(out.name, "video/mp4") { o -> out.inputStream().use { it.copyTo(o) } }
+            } finally {
+                out.parentFile?.deleteRecursively()
             }
         }
     }

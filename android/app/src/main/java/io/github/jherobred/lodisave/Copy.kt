@@ -62,10 +62,14 @@ class Copy(val tl: Boolean) {
 
     /** Title and explanation for an error code from the save engine, or its own message. `site` is
      *  the account a "login" link could use, when LodiSave has one for it. */
-    fun error(code: String, site: String? = null): Pair<String, String> = when (code) {
-        "login" -> t("This one needs a login", "Kailangan mag-login dito") to when (site) {
-            null -> t("LodiSave can save public posts only from this site.", "Pampublikong post lang ang kaya ng LodiSave sa site na ito.")
-            else -> t("Sign in to $site and LodiSave can save what your account can see.", "Mag-sign in sa $site at kaya nang i-save ng LodiSave ang nakikita ng account mo.")
+    fun error(code: String, site: String? = null, signedIn: Boolean = false): Pair<String, String> = when (code) {
+        "login" -> t("This one needs a login", "Kailangan mag-login dito") to when {
+            site == null -> t("LodiSave can save public posts only from this site.", "Pampublikong post lang ang kaya ng LodiSave sa site na ito.")
+            // Signed in, and still refused: the site stopped taking LodiSave's sign-in.
+            signedIn -> t("$site didn't take LodiSave's sign-in. Sign in again and LodiSave saves what your account can see.",
+                "Hindi tinanggap ng $site ang sign-in ng LodiSave. Mag-sign in ulit at ise-save ng LodiSave ang nakikita ng account mo.")
+            else -> t("LodiSave has its own sign-in, apart from the $site app. Sign in to $site here once and LodiSave can save what your account can see.",
+                "May sariling sign-in ang LodiSave, hiwalay sa $site app. Mag-sign in sa $site dito nang isang beses at kaya nang i-save ng LodiSave ang nakikita ng account mo.")
         }
         "nothing" -> t("Nothing to save here", "Walang ma-save dito") to
             t("LodiSave found no video or image at this link.", "Walang nakitang video o image ang LodiSave sa link na ito.")
@@ -306,6 +310,92 @@ class Copy(val tl: Boolean) {
     val gotIt = t("Got it", "Sige")
     fun openedOutside(site: String) = t("Opened in your browser: that page isn't part of $site.", "Binuksan sa browser mo: hindi bahagi ng $site ang page na iyon.")
 
+    // Tabs and the Gallery
+    val home = t("Home", "Home")
+    val gallery = t("Gallery", "Gallery")
+    val galleryTitle = t("Your whole gallery, here too", "Buong gallery mo, nandito rin")
+    val galleryWhy = t(
+        "Let LodiSave see your photos and videos to show the camera's, screenshots and chat apps' beside your saves. They stay on your phone.",
+        "Payagan ang LodiSave na makita ang mga photo at video mo para lumabas ang sa camera, screenshots at chat apps katabi ng mga na-save mo. Sa phone mo lang sila.",
+    )
+    val galleryDenied = t("Android stopped asking. Allow Photos and videos in App info.", "Hindi na nagtatanong ang Android. I-allow ang Photos and videos sa App info.")
+    val gallerySome = t("Showing the photos you picked", "Ipinapakita ang mga photo na pinili mo")
+    val pickMore = t("Pick more", "Pumili pa")
+    val emptyGallery = t("No photos or videos on this phone yet", "Wala pang photo o video sa phone na ito")
+    val loops = t("Play videos and GIFs in grids", "I-play ang videos at GIFs sa grids")
+    val loopsHint = t("Silent, on a loop. Tap one to watch it with sound.", "Walang tunog, paulit-ulit. I-tap para mapanood nang may tunog.")
+
+    // Viewer extras
+    val saveTurned = t("Save it turned", "I-save nang ganito")
+    val sounds = t("Background sounds", "Mga tunog sa likod")
+    val soundsHint = t(
+        "Pick videos or songs to play behind what you watch. They keep playing until you stop them, even with the screen off.",
+        "Pumili ng videos o kanta na tutugtog habang nanonood ka. Tuloy sila hanggang itigil mo, kahit naka-off ang screen.",
+    )
+    val addSound = t("Add a sound", "Magdagdag ng tunog")
+    val noSounds = t("No videos or songs yet.", "Wala pang videos o kanta.")
+    fun soundsPlaying(playing: Int, total: Int) = if (playing == 0) t("$total sounds paused", "$total tunog ang naka-pause") else t("$playing of $total sounds playing", "$playing sa $total tunog ang tumutugtog")
+    val pauseAll = t("Pause all", "I-pause lahat")
+    val playAll = t("Play all", "I-play lahat")
+    val stopAll = t("Stop all", "Itigil lahat")
+
+    // Google Drive backup
+    val drive = t("Google Drive backup", "Backup sa Google Drive")
+    val driveHint = t(
+        "LodiSave puts backups in a LodiSave folder in your Drive and sees only the files it put there.",
+        "Sa LodiSave folder sa Drive mo inilalagay ng LodiSave ang backups, at iyon lang ang nakikita nito.",
+    )
+    val driveConnect = t("Connect Google Drive in LodiSave to back up.", "I-connect ang Google Drive sa LodiSave para mag-backup.")
+    val connect = t("Connect", "I-connect")
+    val connected = t("Connected", "Naka-connect")
+    val notConnected = t("Not connected", "Hindi naka-connect")
+    fun backedUp(n: Int) = t("${files(n)} in Drive", "${files(n)} sa Drive")
+    fun backingUp(done: Int, total: Int) = if (total == 0) t("Backing up to Drive…", "Nagba-backup sa Drive…") else t("Backing up to Drive · $done of $total", "Nagba-backup sa Drive · $done sa $total")
+    val backUpNow = t("Back up now", "Mag-backup na")
+    val toDrive = t("Drive", "Drive")
+    fun queuedToDrive(n: Int) = t("Backing up ${files(n)} to Drive", "Bina-backup ang ${files(n)} sa Drive")
+    val autoBackup = t("Back up on its own", "Kusang mag-backup")
+    val ruleOff = t("Off", "Off")
+    val ruleDays = t("Older than", "Mas luma sa")
+    val ruleDate = t("Before", "Bago ang")
+    fun days(n: Int) = if (n == 1) t("1 day", "1 araw") else t("$n days", "$n araw")
+    val pickDate = t("Pick a date", "Pumili ng petsa")
+    val freeSpace = t("Remove from phone after backup", "Alisin sa phone pagka-backup")
+    fun freeAfter(n: Int) = if (n == 0) t("Right after it's in Drive", "Pagkapasok sa Drive") else t("${days(n)} after it's in Drive", "${days(n)} pagkapasok sa Drive")
+    val freeHint = t(
+        "Only files Drive confirmed whole leave the phone. LodiSave removes its own saves; for other apps' files Android asks you once.",
+        "Ang mga file lang na buong natanggap ng Drive ang aalisin sa phone. Kusang inaalis ng LodiSave ang sarili nitong saves; sa files ng ibang apps, magtatanong muna ang Android.",
+    )
+    fun freeReady(n: Int) = t("${files(n)} from other apps are safe in Drive and can leave your phone. Tap to free up space.", "Ligtas na sa Drive ang ${files(n)} mula sa ibang apps at puwede nang alisin sa phone mo. I-tap para magbakante.")
+    fun freeAsk(n: Int) = t("Remove ${files(n)} from this phone? They're in your Drive.", "Alisin ang ${files(n)} sa phone na ito? Nasa Drive mo sila.")
+    val remove = t("Remove", "Alisin")
+    fun freed(n: Int) = t("Removed ${files(n)} from the phone", "Inalis ang ${files(n)} sa phone")
+
+    // Profiles
+    val profiles = t("Browse a profile", "Tumingin ng profile")
+    val profilesSub = t("Stories, highlights and posts by username", "Stories, highlights at posts ayon sa username")
+    val username = t("Username", "Username")
+    val look = t("Look", "Tingnan")
+    val stories = t("Stories", "Stories")
+    val highlights = t("Highlights", "Highlights")
+    val posts = t("Posts", "Posts")
+    val loadMore = t("Load more", "Magpakita pa")
+    val noStories = t("No stories up right now", "Walang stories ngayon")
+    val noPosts = t("No posts with photos or videos", "Walang posts na may photo o video")
+    val privateAccount = t(
+        "This account is private. LodiSave sees what your signed-in account sees: follow it with that account first.",
+        "Private ang account na ito. Ang nakikita ng naka-sign in na account mo lang ang nakikita ng LodiSave: i-follow muna ito gamit ang account na iyon.",
+    )
+    val unseen = t(
+        "LodiSave only reads stories and never marks them seen, so you don't show up in their viewer list. Saving lots quickly can still make the site ask you to confirm it's you.",
+        "Binabasa lang ng LodiSave ang stories at hindi kailanman minamarkahang nakita, kaya hindi ka lalabas sa listahan ng viewers. Kapag maraming sine-save nang mabilisan, puwede pa ring ipa-confirm ng site na ikaw iyan.",
+    )
+    val facebookProfiles = t(
+        "Facebook doesn't let apps list a profile's stories. Share or copy a Facebook story's link to LodiSave instead.",
+        "Hindi pinapayagan ng Facebook na makita ng apps ang listahan ng stories ng profile. I-share o i-copy na lang sa LodiSave ang link ng Facebook story.",
+    )
+    val threadsStories = t("Threads has no stories. These are the latest posts.", "Walang stories ang Threads. Ito ang mga pinakabagong posts.")
+
     companion object {
         fun of(ctx: Context) = Copy(Prefs(ctx).lang == "tl")
     }
@@ -360,4 +450,27 @@ class Prefs(ctx: Context) {
     var gaming: String
         get() = sp.getString("gaming", "auto") ?: "auto"
         set(v) = sp.edit { putString("gaming", v) }
+    /** Gallery albums made here that have no files yet, as folder paths like "Pictures/Trips/". */
+    var folders: Set<String>
+        get() = sp.getStringSet("folders", null).orEmpty().toSet()
+        set(v) = sp.edit { putStringSet("folders", v) }
+    /** Grids play their videos and GIFs, silent and on a loop. */
+    var loops: Boolean
+        get() = sp.getBoolean("loops", true)
+        set(v) = sp.edit { putBoolean("loops", v) }
+    /** Drive backs up on its own: "off", "days" (older than `backupDays`) or "date" (from before `backupBefore`). */
+    var backupRule: String
+        get() = sp.getString("backupRule", "off") ?: "off"
+        set(v) = sp.edit { putString("backupRule", v) }
+    var backupDays: Int
+        get() = sp.getInt("backupDays", 30)
+        set(v) = sp.edit { putInt("backupDays", v) }
+    /** In seconds since 1970. */
+    var backupBefore: Long
+        get() = sp.getLong("backupBefore", System.currentTimeMillis() / 1000 - 365L * 86_400)
+        set(v) = sp.edit { putLong("backupBefore", v) }
+    /** Days after a backup that a file leaves the phone, or -1 to keep it. */
+    var freeDays: Int
+        get() = sp.getInt("freeDays", -1)
+        set(v) = sp.edit { putInt("freeDays", v) }
 }

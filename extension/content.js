@@ -239,10 +239,23 @@
     throw new Error('Nothing to build for this item');
   }
 
+  // A built file read in pieces, for the LodiSave app to write into a folder the user chose.
+  const reading = new Map(); // blob: URL -> Blob, while the service worker copies it
+  async function chunk(url, at, size) {
+    let blob = reading.get(url);
+    if (!blob) reading.set(url, (blob = await (await fetch(url)).blob()));
+    const done = at + size >= blob.size;
+    if (done) reading.delete(url);
+    return { data: LodiShared.b64(new Uint8Array(await blob.slice(at, at + size).arrayBuffer())), done };
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (msg.type === 'pick') reply(pick());
     else if (msg.type === 'local-url') {
       localUrls(msg.item).then(reply, (e) => reply({ error: e.message || String(e) }));
+      return true;
+    } else if (msg.type === 'read-chunk') {
+      chunk(msg.url, msg.at, msg.size).then(reply, (e) => reply({ error: e.message || String(e) }));
       return true;
     } else if (msg.type === 'revoke') {
       for (const url of msg.urls) msg.main ? ask('revoke', { url }) : URL.revokeObjectURL(url);

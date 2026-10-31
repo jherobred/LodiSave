@@ -35,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -150,12 +151,32 @@ class SignInActivity : ComponentActivity() {
         val site = intent.getStringExtra(EXTRA_SITE)?.let { name -> Site.entries.firstOrNull { it.name == name } } ?: return finish()
         // A sign-in the site stopped taking, as after a save that needed a login: start over clean.
         if (savedInstanceState == null && site.signedIn()) site.signOut()
-        setContent { LodiTheme { SignIn(site, onDone = { setResult(RESULT_OK); finish() }, onClose = ::finish) } }
+        setContent { LodiTheme { SignIn(site, onDone = ::signedIn, onClose = ::finish) } }
+    }
+
+    // A link from the share card saves again, and the card comes back to follow it.
+    private fun signedIn() {
+        intent.getStringExtra(EXTRA_RETRY)?.let { link ->
+            val id = SaveWorker.enqueue(this, link)
+            startActivity(Intent(this, ShareActivity::class.java).putExtra(ShareActivity.EXTRA_WORKS, arrayOf(id.toString())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        setResult(RESULT_OK)
+        finish()
     }
 
     companion object {
         private const val EXTRA_SITE = "site"
+        private const val EXTRA_RETRY = "retry"
         fun intent(ctx: Context, site: Site): Intent = Intent(ctx, SignInActivity::class.java).putExtra(EXTRA_SITE, site.name)
+
+        /**
+         * Signing in from the share card. The card's task stays out of Recents, so a sign-in opened
+         * there was lost as soon as you switched to your authenticator app. This one opens in
+         * LodiSave's own task, which Recents and the app icon bring back, and saves `link` again once
+         * you're in.
+         */
+        fun fromCard(ctx: Context, site: Site, link: String): Intent =
+            intent(ctx, site).putExtra(EXTRA_RETRY, link).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 }
 
@@ -168,6 +189,7 @@ private fun SignIn(site: Site, onDone: () -> Unit, onClose: () -> Unit) {
     var done by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
     var web by remember { mutableStateOf<WebView?>(null) }
+    var page by rememberSaveable { mutableIntStateOf(0) }
     // Some sites sign in without loading a new page, so the store is checked while the screen is up.
     LaunchedEffect(Unit) {
         while (!site.signedIn()) delay(500)
@@ -192,11 +214,14 @@ private fun SignIn(site: Site, onDone: () -> Unit, onClose: () -> Unit) {
         if (loading && !done) Meter(-1f, Modifier.padding(horizontal = 16.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
             // Not inside an animated layer: a WebView draws its page outside of one, or not at all.
-            AndroidView(
-                { c -> signInView(c, site, copy) { loading = it }.also { web = it } },
-                Modifier.fillMaxSize(),
-                onRelease = { it.destroy(); web = null },
-            )
+            // A new page when Android ended the last one's process, as it can while you're in another app.
+            key(page) {
+                AndroidView(
+                    { c -> signInView(c, site, copy, { loading = it }, { page++ }).also { web = it } },
+                    Modifier.fillMaxSize(),
+                    onRelease = { it.destroy(); web = null },
+                )
+            }
             // Signed in: Lodi cheers over the page before the screen closes.
             if (done) Enter(0, Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize().background(t.ground), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -213,9 +238,11 @@ private fun SignIn(site: Site, onDone: () -> Unit, onClose: () -> Unit) {
 
 /** The WebView for a site's login page, set up so only the site's own page runs in it. */
 @SuppressLint("SetJavaScriptEnabled") // the login page needs its own scripts; LodiSave adds none
-private fun signInView(ctx: Context, site: Site, copy: Copy, onLoading: (Boolean) -> Unit) = WebView(ctx).apply {
+private fun signInView(ctx: Context, site: Site, copy: Copy, onLoading: (Boolean) -> Unit, onGone: () -> Unit) = WebView(ctx).apply {
     // Filling its space: a WebView left to wrap its content sizes itself to the whole page and draws blank.
     layoutParams = android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
+    // The page's process keeps LodiSave's importance while you fetch a code in another app.
+    setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
     settings.javaScriptEnabled = true
     settings.domStorageEnabled = true
     settings.allowFileAccess = false
@@ -239,6 +266,12 @@ private fun signInView(ctx: Context, site: Site, copy: Copy, onLoading: (Boolean
 
         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) = onLoading(true)
         override fun onPageFinished(view: WebView, url: String?) = onLoading(false)
+
+        // Without this, Android ending the page's process would take LodiSave down with it.
+        override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+            onGone()
+            return true
+        }
     }
     loadUrl(site.login)
 }
@@ -292,9 +325,13 @@ fun AccountsSheet(copy: Copy, onDismiss: () -> Unit) {
 
 /** A "Sign in to <site>" button for a save that needed a login, which saves again once you're in. */
 @Composable
-fun SignInPill(copy: Copy, link: String, modifier: Modifier = Modifier, onSignedIn: () -> Unit) {
+fun SignInPill(copy: Copy, link: String, modifier: Modifier = Modifier, card: (() -> Unit)? = null, onSignedIn: () -> Unit) {
     val ctx = LocalContext.current
     val site = Site.of(link) ?: return
     val signIn = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { if (it.resultCode == android.app.Activity.RESULT_OK) onSignedIn() }
-    Pill(copy.signInTo(site.label), { signIn.launch(SignInActivity.intent(ctx, site)) }, modifier)
+    // From the share card (`card`), the sign-in opens in LodiSave's own task and the card closes.
+    Pill(copy.signInTo(site.label), {
+        if (card == null) signIn.launch(SignInActivity.intent(ctx, site))
+        else { ctx.startActivity(SignInActivity.fromCard(ctx, site, link)); card() }
+    }, modifier)
 }

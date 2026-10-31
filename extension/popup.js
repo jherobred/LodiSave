@@ -14,6 +14,12 @@ const COPY = {
     small: (n) => `Show ${n} small`, hideSmall: 'Hide small',
     settings: 'Settings', language: 'Language', motion: 'Motion', motionOn: 'On', motionOff: 'Off', close: 'Done',
     hover: 'Checkbox on hover', hoverHint: 'Hover a photo or video on any site, tick its circle, then save everything you ticked from the bar.',
+    whereDir: (d) => `in ${d}`, saveTo: 'Save to', toDownloads: 'Downloads', toLast: 'Last folder', toFixed: 'One folder', toEach: 'Ask for each',
+    hint_downloads: () => 'Downloads › LodiSave. If your browser asks where to save each file, it asks once per file.',
+    hint_last: (d) => (d ? `Where you saved last: ${d}` : 'The first save asks for a folder. Later saves go to the folder you used last.'),
+    hint_fixed: (d) => (d ? `Every save goes to ${d}` : 'Choose the folder every save goes to.'),
+    hint_each: () => 'Save lists each file with a folder to pick for it.',
+    choose: 'Choose', change: 'Change', noApp: 'Folders outside Downloads need the LodiSave app for Windows.',
   },
   tl: {
     looking: 'Naghahanap…', found: (n) => `May ${n}!`, on: (h) => `sa ${h}`,
@@ -28,6 +34,12 @@ const COPY = {
     small: (n) => `Ipakita ang ${n} maliit`, hideSmall: 'Itago ang maliliit',
     settings: 'Settings', language: 'Wika', motion: 'Galaw', motionOn: 'On', motionOff: 'Off', close: 'Sige',
     hover: 'Checkbox pag naka-hover', hoverHint: 'I-hover ang photo o video sa kahit anong site, i-tick ang bilog, tapos i-save lahat ng na-tick mula sa bar.',
+    whereDir: (d) => `nasa ${d}`, saveTo: 'I-save sa', toDownloads: 'Downloads', toLast: 'Huling folder', toFixed: 'Isang folder', toEach: 'Tanungin bawat isa',
+    hint_downloads: () => 'Downloads › LodiSave. Kung nagtatanong ang browser mo kung saan ise-save ang bawat file, magtatanong ito sa bawat isa.',
+    hint_last: (d) => (d ? `Kung saan ka huling nag-save: ${d}` : 'Magtatanong ang unang save ng folder. Sa huling folder na ginamit mo mapupunta ang mga susunod.'),
+    hint_fixed: (d) => (d ? `Lahat ng save ay mapupunta sa ${d}` : 'Piliin ang folder na pupuntahan ng bawat save.'),
+    hint_each: () => 'Ipapakita ng I-save ang bawat file na may folder na pipiliin para dito.',
+    choose: 'Pumili', change: 'Palitan', noApp: 'Kailangan ang LodiSave app para sa Windows para sa folders sa labas ng Downloads.',
   },
 };
 const KIND = { video: 'Video', audio: 'Audio', stream: 'Stream', hls: 'HLS', dash: 'DASH' };
@@ -44,7 +56,11 @@ const make = (tag, cls, text) => Object.assign(document.createElement(tag), cls 
 const pref = (k, d) => { try { return localStorage.getItem(k) || d } catch { return d } };
 const keep = (k, v) => { try { localStorage.setItem(k, v) } catch {} };
 
-const ui = { lang: pref('lang', 'en'), motion: pref('motion', 'on'), hover: pref('hover', 'on'), phase: 'looking', host: '', filter: 'all', small: false, progress: null, ok: 0, bad: 0, lastId: null, note: null };
+const ui = {
+  lang: pref('lang', 'en'), motion: pref('motion', 'on'), hover: pref('hover', 'on'), phase: 'looking', host: '', filter: 'all', small: false, progress: null, ok: 0, bad: 0, lastId: null, note: null,
+  saveTo: 'downloads', lastDir: '', fixedDir: '', app: true,
+};
+const folderOf = (path) => path.split(/[\\/]/).slice(-2, -1)[0] || path;
 const tiles = [];
 let tabId;
 const say = (key, ...args) => { const v = COPY[ui.lang][key]; return typeof v === 'function' ? v(...args) : v };
@@ -121,7 +137,7 @@ function addTile(it, i) {
     pick.onclick = () => { t.sel = !t.sel; paint() };
     save.onclick = async () => {
       pose('full');
-      const r = await saveTile(t);
+      const r = await saveTiles([t], landed);
       pose(r.ok ? 'yay' : 'oops');
       paint();
     };
@@ -130,11 +146,26 @@ function addTile(it, i) {
   $('grid').append(fig);
 }
 
-async function saveTile(t) {
-  t.save.disabled = true;
-  t.save.dataset.s = 'saving';
-  paintTile(t);
-  const r = await chrome.runtime.sendMessage({ type: 'save', tabId, item: t.it }).catch((e) => ({ error: e.message }));
+// Saves run in the service worker, so they finish if the popup closes, as it does when a folder
+// picker opens over it. `each(tile, result)` hears each one as it lands.
+async function saveTiles(list, each) {
+  for (const t of list) { t.save.disabled = true; t.save.dataset.s = 'saving'; paintTile(t) }
+  const one = (m) => { if (m.type === 'saved-one' && m.tabId === tabId && list[m.i]) each(list[m.i], m.res) };
+  chrome.runtime.onMessage.addListener(one);
+  const r = await chrome.runtime.sendMessage({ type: 'save-many', tabId, items: list.map((t) => t.it) }).catch((e) => ({ error: e.message }));
+  chrome.runtime.onMessage.removeListener(one);
+  // Results that came with the answer rather than one by one. A closed folder picker saves nothing,
+  // and the tiles can be saved again.
+  for (const [i, t] of list.entries()) {
+    if (t.save.dataset.s !== 'saving') continue;
+    if (r.results?.[i]) each(t, r.results[i]);
+    else { t.save.disabled = false; t.save.dataset.s = 'save'; paintTile(t) }
+  }
+  if (r.note || (r.error && !r.ok)) ui.note = { text: r.note || r.error, cls: r.note ? 'warn' : 'bad' };
+  return r;
+}
+
+function landed(t, r) {
   t.save.dataset.s = r.ok ? 'saved' : 'failed';
   t.save.disabled = !!r.ok;
   t.save.title = r.error || r.filename || '';
@@ -142,7 +173,7 @@ async function saveTile(t) {
   t.sel = false;
   if (r.ok) ui.lastId = r.id;
   if (r.warning || r.error) ui.note = { text: r.warning || r.error, cls: r.ok ? 'warn' : 'bad' };
-  return r;
+  paintTile(t);
 }
 
 const shown = (t) => (ui.filter === 'all' || (ui.filter === 'video') === isVideo(t.it)) && (ui.small || !t.small);
@@ -154,16 +185,27 @@ async function saveMany() {
   if (!list.length) return;
   ui.phase = 'saving';
   ui.ok = ui.bad = 0;
+  ui.progress = [1, list.length];
   pose('full');
-  for (const [i, t] of list.entries()) {
-    ui.progress = [i + 1, list.length];
-    paint();
-    (await saveTile(t)).ok ? ui.ok++ : ui.bad++;
-  }
-  ui.progress = null;
-  ui.phase = 'saved';
-  pose(ui.ok ? 'yay' : 'oops');
   paint();
+  const r = await saveTiles(list, (t, res) => {
+    landed(t, res);
+    res.ok ? ui.ok++ : ui.bad++;
+    ui.progress = [Math.min(ui.ok + ui.bad + 1, list.length), list.length];
+    paint();
+  });
+  ui.progress = null;
+  ui.phase = r.cancelled ? 'found' : 'saved';
+  pose(r.cancelled ? 'grab' : ui.ok ? 'yay' : 'oops');
+  paint();
+}
+
+// The Save to setting and the folder it uses.
+function paintFolder() {
+  const to = ui.saveTo, dir = to === 'fixed' ? ui.fixedDir : to === 'last' ? ui.lastDir : '';
+  $('folder').textContent = !ui.app && to !== 'downloads' ? say('noApp') : say(`hint_${to}`, dir);
+  $('choose').hidden = !ui.app || !(to === 'last' || to === 'fixed');
+  $('choose').textContent = say(dir ? 'change' : 'choose');
 }
 
 function paintTile(t) {
@@ -185,7 +227,8 @@ function paint() {
   document.body.classList.toggle('empty', empty);
 
   $('title').textContent = empty || ui.phase === 'looking' ? say(ui.phase) : ui.phase === 'saved' ? say('done', ui.ok) : say('found', counts.all);
-  $('sub').textContent = empty ? say(`${ui.phase}Sub`) : ui.phase === 'saved' ? say('where') : ui.host ? say('on', ui.host) : '';
+  const where = typeof ui.lastId === 'string' ? say('whereDir', folderOf(ui.lastId)) : say('where');
+  $('sub').textContent = empty ? say(`${ui.phase}Sub`) : ui.phase === 'saved' ? where : ui.host ? say('on', ui.host) : '';
 
   for (const b of $('tabs').children) {
     const f = b.dataset.f;
@@ -219,15 +262,27 @@ function paint() {
   for (const seg of document.querySelectorAll('[data-pref]')) {
     for (const b of seg.children) b.setAttribute('aria-pressed', ui[seg.dataset.pref] === b.dataset.v);
   }
+  paintFolder();
 }
 
 $('tabs').onclick = (e) => {
   const f = e.target.closest('[data-f]')?.dataset.f;
   if (f) { ui.filter = f; paint() }
 };
-$('primary').onclick = () => ($('primary').dataset.folder === 'true' ? chrome.downloads.show(ui.lastId) : saveMany());
-$('open-prefs').onclick = () => $('prefs').showModal();
+$('primary').onclick = () => ($('primary').dataset.folder === 'true' ? chrome.runtime.sendMessage({ type: 'show-download', id: ui.lastId }) : saveMany());
+$('open-prefs').onclick = () => {
+  $('prefs').showModal();
+  // Whether the app is there to save outside Downloads.
+  chrome.runtime.sendMessage({ type: 'app-ready' }).then((ok) => { ui.app = ok; paint() }, () => {});
+};
 $('close-prefs').onclick = () => $('prefs').close();
+// The folder picker opens over the popup, which closes; the service worker keeps the folder.
+$('choose').onclick = () => chrome.runtime.sendMessage({ type: 'choose-folder', fixed: ui.saveTo === 'fixed' }).catch(() => {});
+chrome.storage.local.get(['saveTo', 'lastDir', 'fixedDir']).then((p) => { Object.assign(ui, p); paint() });
+chrome.storage.onChanged.addListener((c) => {
+  for (const k of ['saveTo', 'lastDir', 'fixedDir']) if (c[k]) ui[k] = c[k].newValue;
+  paint();
+});
 $('prefs').onclick = (e) => {
   const b = e.target.closest('[data-v]'), key = b?.parentElement.dataset.pref;
   if (!key) return;
