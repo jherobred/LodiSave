@@ -74,6 +74,9 @@ dependencies {
     implementation(libs.androidx.work.runtime)
     // Google Drive backup: Android asks the user to let LodiSave reach its own files in their Drive.
     implementation(libs.play.services.auth)
+    // Small silent copies of videos for the grids, so many can play at once.
+    implementation(libs.media3.transformer)
+    implementation(libs.media3.effect)
 
     testImplementation(libs.junit)
 

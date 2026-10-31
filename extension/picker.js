@@ -12,14 +12,18 @@
       pick: 'Pick', unpick: 'Unpick', picked: (n) => `${n} picked`, save: (n) => `Save ${n}`, saving: (i, n) => `Saving… ${i}/${n}`, done: (n) => `Saved ${n}!`, failed: (n) => `${n} failed`, partly: (n) => `${n} only partly loaded`, show: 'Show', clear: 'Clear',
       downloads: 'Downloads', chooseFolder: 'Choose folder', perFile: 'Folder per file', saveTo: (p) => `Saves go to ${p}. Click to pick another folder.`,
       route: 'Where does each one go?', choose: 'Choose…', routeFor: (n) => `Save ${n} to`, cancel: 'Cancel', noApp: 'went to Downloads',
+      saveToTitle: 'Save to', other: 'Other folder…', newFolder: 'New folder name', make: 'Make', madeIn: (p) => `New folders go in ${p}.`, lodiFolder: 'the LodiSave folder',
+      needApp: 'Folders need the LodiSave app for Windows.', badName: 'Windows can\'t use that name.', blocked: 'Windows Security blocked that folder.', gone: 'That folder is gone. Pick another one in the popup.',
     },
     tl: {
       pick: 'Piliin', unpick: 'Alisin', picked: (n) => `${n} napili`, save: (n) => `I-save ang ${n}`, saving: (i, n) => `Sine-save… ${i}/${n}`, done: (n) => `Na-save ang ${n}!`, failed: (n) => `${n} pumalya`, partly: (n) => `${n} hindi buo`, show: 'Ipakita', clear: 'Burahin',
       downloads: 'Downloads', chooseFolder: 'Pumili ng folder', perFile: 'Folder bawat file', saveTo: (p) => `Sa ${p} napupunta ang saves. I-click para pumili ng ibang folder.`,
       route: 'Saan ilalagay ang bawat isa?', choose: 'Pumili…', routeFor: (n) => `Saan ise-save ang ${n}`, cancel: 'Huwag na', noApp: 'napunta sa Downloads',
+      saveToTitle: 'I-save sa', other: 'Ibang folder…', newFolder: 'Pangalan ng bagong folder', make: 'Gawin', madeIn: (p) => `Sa ${p} gagawin ang mga bagong folder.`, lodiFolder: 'LodiSave folder',
+      needApp: 'Kailangan ang LodiSave app para sa Windows para sa folders.', badName: 'Hindi magagamit ng Windows ang pangalang iyan.', blocked: 'Hinarang ng Windows Security ang folder na iyan.', gone: 'Wala na ang folder na iyan. Pumili ng iba sa popup.',
     },
   };
-  const prefs = { hover: true, lang: 'en', motion: 'on', saveTo: 'downloads', lastDir: '', fixedDir: '', dirs: [] };
+  const prefs = { hover: true, lang: 'en', motion: 'on', saveTo: 'downloads', lastDir: '', fixedDir: '', dirs: [], newIn: '' };
   const say = (k, ...a) => { const v = COPY[prefs.lang === 'tl' ? 'tl' : 'en'][k]; return typeof v === 'function' ? v(...a) : v };
   const CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
   const FOLDER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5v10c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-8c0-1.1-.9-2-2-2h-7L10 5H5c-1.1 0-2 .9-2 2z"/></svg>';
@@ -89,10 +93,22 @@
     .dest { display: inline-flex; align-items: center; gap: 6px; max-width: 170px; min-height: 40px; padding: 0 14px 0 12px; border-radius: 999px; background: #202023; color: #F4F3F1 }
     .dest svg, .route svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round }
     .dest span { overflow: hidden; text-overflow: ellipsis }
-    .route { position: fixed; left: 50%; bottom: 80px; width: min(440px, calc(100vw - 32px)); max-height: 52vh; overflow: auto; display: grid; gap: 8px; padding: 12px;
+    .route, .folders { position: fixed; left: 50%; bottom: 80px; width: min(440px, calc(100vw - 32px)); max-height: 52vh; overflow: auto; display: grid; gap: 8px; padding: 12px;
       border-radius: 22px; background: #18181A; color: #F4F3F1; box-shadow: 0 18px 44px rgb(0 0 0 / .45), 0 0 0 1px #2C2C2F; pointer-events: auto; transform: translateX(-50%);
       font: 600 13px/1.25 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; animation: rise .678s ${FLOAT} both }
     .route p { margin: 2px 4px 4px; font-size: 14px }
+    .folders { width: min(320px, calc(100vw - 32px)); gap: 6px }
+    .folders p { margin: 2px 4px 4px; font-size: 14px }
+    .folders .hint, .folders .err { margin: 0 4px; font-size: 12px; font-weight: 400; color: #A3A19C }
+    .folders .err { color: #FF8A7A }
+    .folders button { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 14px; border: 0; border-radius: 999px; background: #202023; color: #F4F3F1; font: inherit; text-align: left; cursor: pointer }
+    .folders button[aria-current="true"] { box-shadow: inset 0 0 0 2px #FF8A3D }
+    .folders button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+    .folders svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round }
+    .folders form { display: flex; gap: 6px; margin: 4px 0 0 }
+    .folders input { flex: 1; min-width: 0; min-height: 38px; padding: 0 14px; border: 1px solid #2C2C2F; border-radius: 999px; background: #0F0F10; color: #F4F3F1; font: inherit; font-weight: 400; outline: 0 }
+    .folders input:focus { border-color: #FF8A3D }
+    .folders .go { background: #FF8A3D; color: #0F0F10 }
     .route .row { display: flex; align-items: center; gap: 10px }
     .route img, .route .ph { width: 36px; height: 36px; flex: none; border-radius: 10px; object-fit: cover; background: #2C2C2F }
     .route .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; color: #A3A19C }
@@ -297,10 +313,12 @@
 
   // Clicks on the overlay never reach the page. Registered at document_start, so this runs first.
   const guard = (e) => {
+    // A press on the page closes the bar's folder list.
+    if (e.target !== host && e.type === 'pointerdown' && folders.open) paintFolders(false);
     if (e.target !== host) return;
     e.stopImmediatePropagation();
-    // A folder list opens on its own press. Everything else in the overlay is LodiSave's alone.
-    if (e.composedPath()[0]?.closest?.('select')) return;
+    // A folder list opens on its own press, and a text box takes focus. Everything else in the overlay is LodiSave's alone.
+    if (e.composedPath()[0]?.closest?.('select, input')) return;
     e.preventDefault();
     if (e.type !== 'click') return;
     const btn = e.composedPath()[0]?.closest?.('[data-act]');
@@ -311,12 +329,68 @@
     else if (act === 'save') saveAll();
     else if (act === 'clear') chrome.runtime.sendMessage({ type: 'clear-picked' }).catch(() => {});
     else if (act === 'show' && bar.last) chrome.runtime.sendMessage({ type: 'show-download', id: bar.last }).catch(() => {});
-    // The folder saves go to: the app's folder picker, or with a folder per file, the list.
-    else if (act === 'dest') prefs.saveTo === 'each' ? saveAll() : chrome.runtime.sendMessage({ type: 'choose-folder', title: say('chooseFolder') }).catch(() => {});
+    // The folder saves go to: the folder list with a new-folder box, or with a folder per file, the per-pick list.
+    else if (act === 'dest') prefs.saveTo === 'each' ? saveAll() : paintFolders(!folders.open);
+    else if (act === 'use') { paintFolders(false); chrome.runtime.sendMessage({ type: 'use-folder', dir: btn.dataset.dir }).catch(() => {}) }
+    else if (act === 'other') { paintFolders(false); chrome.runtime.sendMessage({ type: 'choose-folder', title: say('chooseFolder') }).catch(() => {}) }
+    else if (act === 'mkdir') makeFolder();
     else if (act === 'route-save') { const dirs = bar.route.dirs; bar.route = null; paintRoute(); saveAll(dirs) }
     else if (act === 'route-cancel') { bar.route = null; paintRoute() }
   };
   for (const t of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu']) window.addEventListener(t, guard, true);
+  // Typing in the new-folder box never reaches the page's shortcuts. Escape closes the folder list.
+  for (const t of ['keydown', 'keyup', 'keypress']) {
+    window.addEventListener(t, (e) => {
+      if (e.target !== host) return;
+      e.stopImmediatePropagation();
+      if (t === 'keydown' && e.key === 'Escape') paintFolders(false);
+    }, true);
+  }
+
+  // The bar's folder list: recent folders, Windows' folder picker, and a box to name a new folder.
+  const folders = { open: false, error: '' };
+  function paintFolders(open = folders.open) {
+    let panel = layer.querySelector('.folders');
+    if (open !== folders.open) folders.error = '';
+    folders.open = open;
+    if (!open) return panel?.remove();
+    const fresh = !panel;
+    if (fresh) layer.append((panel = Object.assign(document.createElement('div'), { className: 'folders' })));
+    const typed = panel.querySelector('input')?.value || '';
+    const now = prefs.saveTo === 'fixed' ? prefs.fixedDir : prefs.lastDir;
+    const known = [...new Set([now, ...(prefs.dirs || [])].filter(Boolean))].slice(0, 6);
+    const line = (act, label, dir) => {
+      const b = Object.assign(document.createElement('button'), { type: 'button', innerHTML: FOLDER, title: dir || '' });
+      b.dataset.act = act;
+      if (dir) { b.dataset.dir = dir; b.setAttribute('aria-current', dir === now) }
+      b.append(Object.assign(document.createElement('span'), { textContent: label }));
+      return b;
+    };
+    const form = document.createElement('form');
+    form.innerHTML = '<input maxlength="60" autocomplete="off" spellcheck="false"><button type="button" class="go" data-act="mkdir"></button>';
+    form.firstChild.placeholder = say('newFolder');
+    form.firstChild.value = typed;
+    form.lastChild.textContent = say('make');
+    // Enter in the box submits the form, which never leaves the overlay.
+    form.onsubmit = (e) => { e.preventDefault(); makeFolder() };
+    panel.replaceChildren(
+      Object.assign(document.createElement('p'), { textContent: say('saveToTitle') }),
+      ...known.map((d) => line('use', base(d), d)),
+      line('other', say('other')),
+      form,
+      Object.assign(document.createElement('p'), { className: folders.error ? 'err' : 'hint', textContent: folders.error || say('madeIn', prefs.newIn ? base(prefs.newIn) : say('lodiFolder')) }),
+    );
+    ensure();
+    if (fresh) form.firstChild.focus();
+  }
+  async function makeFolder() {
+    const box = layer.querySelector('.folders input'), name = box?.value.trim();
+    if (!name) return box?.focus();
+    const r = await chrome.runtime.sendMessage({ type: 'make-folder', name }).catch((e) => ({ error: e.message }));
+    if (r?.dir) return paintFolders(false);
+    folders.error = r?.noApp ? say('needApp') : say({ name: 'badName', blocked: 'blocked', folder: 'gone' }[r?.error] || 'needApp');
+    paintFolders(true);
+  }
 
   // The bar, top frame only. It counts the picks of every frame in the tab.
   const counts = new Map(); // frameId -> picks
@@ -344,6 +418,7 @@
     const dest = bar.node.querySelector('.dest'), to = prefs.saveTo || 'downloads';
     const dir = to === 'fixed' ? prefs.fixedDir : to === 'last' ? prefs.lastDir : '';
     dest.hidden = bar.state !== 'pick';
+    if (dest.hidden || !show) paintFolders(false);
     dest.lastElementChild.textContent = to === 'each' ? say('perFile') : to === 'downloads' ? say('downloads') : dir ? base(dir) : say('chooseFolder');
     dest.title = say('saveTo', to === 'each' ? say('perFile').toLowerCase() : dir || 'Downloads › LodiSave');
     if (bar.state === 'pick') {
@@ -475,6 +550,7 @@
     if (prefs.hover === false) hovered = null;
     if (TOP && bar.node) paintBar();
     if (TOP && bar.route) paintRoute();
+    if (TOP && folders.open) paintFolders();
     render();
   });
 })();

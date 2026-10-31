@@ -13,6 +13,9 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.Color
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -186,6 +189,8 @@ private fun App(clip: String?, focus: Int, free: Boolean, onFreeDone: () -> Unit
     var moving by remember { mutableStateOf(prefs.motion) }
     var hideRecent by remember { mutableStateOf(prefs.hideRecent) }
     var loops by remember { mutableStateOf(prefs.loops) }
+    var layout by remember { mutableStateOf(prefs.layout) }
+    var blur by remember { mutableStateOf(prefs.blur) }
     val copy = remember(lang) { Copy(lang == "tl") }
     val motion = moving && !Gaming.on
     val infos by remember { WorkManager.getInstance(ctx).getWorkInfosByTagFlow(SaveWorker.TAG) }.collectAsState(emptyList())
@@ -263,7 +268,7 @@ private fun App(clip: String?, focus: Int, free: Boolean, onFreeDone: () -> Unit
     }
 
     val saved = rememberSaveableStateHolder()
-    CompositionLocalProvider(LocalMotion provides motion, LocalLoops provides loops) {
+    CompositionLocalProvider(LocalMotion provides motion, LocalLoops provides loops, LocalPins provides (layout == "pins"), LocalBlur provides blur) {
         Box(Modifier.fillMaxSize()) {
             SharedTransitionLayout(Modifier.fillMaxSize().background(LocalTokens.current.ground)) {
                 CompositionLocalProvider(LocalShared provides this) {
@@ -308,6 +313,7 @@ private fun App(clip: String?, focus: Int, free: Boolean, onFreeDone: () -> Unit
         if (settings) SettingsSheet(
             copy, focus, lang, { lang = it; prefs.lang = it; SaveWidget.refresh(ctx) }, moving, { moving = it; prefs.motion = it },
             hideRecent, { hideRecent = it; prefs.hideRecent = it }, loops, { loops = it; prefs.loops = it },
+            layout, { layout = it; prefs.layout = it }, blur, { blur = it; prefs.blur = it },
             onAccounts = { settings = false; accounts = true }, onDrive = { settings = false; drive = true },
             onIntro = { settings = false; go(Screen.Intro) }, onDismiss = { settings = false },
         )
@@ -492,6 +498,7 @@ private fun Home(
                 modifier = Modifier.clip(CircleShape).clickable(onClick = onLibrary).padding(horizontal = 12.dp, vertical = 8.dp))
         }
         Box(Modifier.weight(1f)) {
+            val veiled = rememberVeil()
             AnimatedContent(hideRecent, transitionSpec = { if (motion) fadeIn() togetherWith fadeOut() else EnterTransition.None togetherWith ExitTransition.None }, label = "recent") { hide ->
                 when {
                     // A calm line in place of the thumbnails, to bring them back.
@@ -508,7 +515,7 @@ private fun Home(
                     recent.isEmpty() -> Text(copy.none, color = t.muted, fontFamily = Geist, fontSize = 13.sp)
                     else -> LazyVerticalGrid(GridCells.Fixed(3), state = grid, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         itemsIndexed(recent, key = { _, it -> it.id }) { i, item ->
-                            RecentItem(item, copy, if (entered) -1 else i + 1, if (motion) Modifier.animateItem() else Modifier.animateItem(null, null, null)) { onOpen(i) }
+                            RecentItem(item, copy, veiled(item), if (entered) -1 else i + 1, if (motion) Modifier.animateItem() else Modifier.animateItem(null, null, null)) { onOpen(i) }
                         }
                     }
                 }
@@ -533,6 +540,7 @@ private fun Home(
 private fun SettingsSheet(
     copy: Copy, focus: Int, lang: String, onLang: (String) -> Unit, motion: Boolean, onMotion: (Boolean) -> Unit,
     hideRecent: Boolean, onHideRecent: (Boolean) -> Unit, loops: Boolean, onLoops: (Boolean) -> Unit,
+    layout: String, onLayout: (String) -> Unit, blur: String, onBlur: (String) -> Unit,
     onAccounts: () -> Unit, onDrive: () -> Unit, onIntro: () -> Unit, onDismiss: () -> Unit,
 ) {
     val ctx = LocalContext.current
@@ -548,6 +556,9 @@ private fun SettingsSheet(
             SettingRow(copy.recentOnHome) { Segmented(listOf("show" to copy.show, "hide" to copy.hide), if (hideRecent) "hide" else "show") { onHideRecent(it == "hide") } }
             SettingRow(copy.loops) { Segmented(listOf("on" to copy.on, "off" to copy.off), if (loops) "on" else "off") { onLoops(it == "on") } }
             Text(copy.loopsHint, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
+            SettingRow(copy.layout) { Segmented(listOf("grid" to copy.layoutGrid, "pins" to copy.layoutPins), layout, onLayout) }
+            SettingRow(copy.blur) { Segmented(listOf("off" to copy.off, "all" to copy.blurAll, "pick" to copy.blurPicked), blur, onBlur) }
+            Text(copy.blurHint, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
             SettingRow(copy.drive) { Pill(copy.open, onDrive, primary = false) }
             Text(copy.driveHint, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
             SettingRow(copy.bubble) {
@@ -605,9 +616,10 @@ private fun Link(text: String, onClick: () -> Unit) =
     Text(text, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = LocalTokens.current.accent,
         modifier = Modifier.clip(CircleShape).clickable(onClick = onClick).padding(vertical = 4.dp))
 
-/** A recent save: tap to open it in the viewer, long-press to keep it off home. */
+/** A recent save: tap to open it in the viewer, long-press to keep it off home, or blur or unblur it
+ *  while blur is on. `veiled`, it shows blurred. */
 @Composable
-private fun RecentItem(item: Saved, copy: Copy, order: Int, modifier: Modifier, onOpen: () -> Unit) {
+private fun RecentItem(item: Saved, copy: Copy, veiled: Boolean, order: Int, modifier: Modifier, onOpen: () -> Unit) {
     val ctx = LocalContext.current
     val t = LocalTokens.current
     val thumb = rememberThumb(item)
@@ -621,8 +633,12 @@ private fun RecentItem(item: Saved, copy: Copy, order: Int, modifier: Modifier, 
         ) {
             Hero("home${item.id}", Modifier.fillMaxWidth().aspectRatio(1.2f), RoundedCornerShape(18.dp)) {
                 Box(Modifier.fillMaxSize().background(t.soft), contentAlignment = Alignment.Center) {
-                    if (thumb != null) Image(thumb, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    if (thumb != null) Image(thumb, item.name, if (veiled) Modifier.fillMaxSize().blur(24.dp, BlurredEdgeTreatment.Rectangle) else Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     else if (item.kind == "audio") GlyphIcon(Glyph.Music, tint = t.muted, size = 30.dp)
+                    // Android 11 and older can't blur, so the picture is covered instead.
+                    if (veiled) Box(Modifier.fillMaxSize().background(if (Build.VERSION.SDK_INT < 31) t.soft else Color.Transparent), contentAlignment = Alignment.Center) {
+                        GlyphIcon(Glyph.EyeOff, Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)).padding(7.dp), Color.White, 20.dp)
+                    }
                 }
             }
             Text(item.name, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = t.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -631,6 +647,8 @@ private fun RecentItem(item: Saved, copy: Copy, order: Int, modifier: Modifier, 
             DropdownMenu(menu, { menu = false }, containerColor = t.surface) {
                 DropdownMenuItem({ Text(copy.hideFromHome, fontFamily = Geist, color = t.ink) }, { menu = false; Library.hide(ctx, listOf(item), true) },
                     leadingIcon = { GlyphIcon(Glyph.EyeOff, size = 20.dp) })
+                if (LocalBlur.current != "off") DropdownMenuItem({ Text(if (veiled) copy.unblur else copy.blurIt, fontFamily = Geist, color = t.ink) },
+                    { menu = false; Library.veil(ctx, listOf(item), !veiled) }, leadingIcon = { GlyphIcon(if (veiled) Glyph.Eye else Glyph.EyeOff, size = 20.dp) })
             }
         }
     }

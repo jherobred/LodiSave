@@ -20,6 +20,7 @@ const COPY = {
     hint_fixed: (d) => (d ? `Every save goes to ${d}` : 'Choose the folder every save goes to.'),
     hint_each: () => 'Save lists each file with a folder to pick for it.',
     choose: 'Choose', change: 'Change', noApp: 'Folders outside Downloads need the LodiSave app for Windows.',
+    newIn: (d) => `New folders made in the bar go in ${d}.`, lodiFolder: 'the LodiSave folder', reset: 'Reset', newInTitle: 'New folders go in',
   },
   tl: {
     looking: 'Naghahanap…', found: (n) => `May ${n}!`, on: (h) => `sa ${h}`,
@@ -40,6 +41,7 @@ const COPY = {
     hint_fixed: (d) => (d ? `Lahat ng save ay mapupunta sa ${d}` : 'Piliin ang folder na pupuntahan ng bawat save.'),
     hint_each: () => 'Ipapakita ng I-save ang bawat file na may folder na pipiliin para dito.',
     choose: 'Pumili', change: 'Palitan', noApp: 'Kailangan ang LodiSave app para sa Windows para sa folders sa labas ng Downloads.',
+    newIn: (d) => `Sa ${d} mapupunta ang mga bagong folder na gagawin sa bar.`, lodiFolder: 'LodiSave folder', reset: 'I-reset', newInTitle: 'Saan gagawin ang mga bagong folder',
   },
 };
 const KIND = { video: 'Video', audio: 'Audio', stream: 'Stream', hls: 'HLS', dash: 'DASH' };
@@ -206,6 +208,11 @@ function paintFolder() {
   $('folder').textContent = !ui.app && to !== 'downloads' ? say('noApp') : say(`hint_${to}`, dir);
   $('choose').hidden = !ui.app || !(to === 'last' || to === 'fixed');
   $('choose').textContent = say(dir ? 'change' : 'choose');
+  // Where folders made in the bar's folder list go.
+  $('newin-row').hidden = !ui.app;
+  $('newin').textContent = say('newIn', ui.newIn ? ui.newIn.split(/[\\/]/).filter(Boolean).pop() : say('lodiFolder'));
+  $('newin').title = ui.newIn || '';
+  $('newin-reset').hidden = !ui.newIn;
 }
 
 function paintTile(t) {
@@ -278,9 +285,11 @@ $('open-prefs').onclick = () => {
 $('close-prefs').onclick = () => $('prefs').close();
 // The folder picker opens over the popup, which closes; the service worker keeps the folder.
 $('choose').onclick = () => chrome.runtime.sendMessage({ type: 'choose-folder', fixed: ui.saveTo === 'fixed' }).catch(() => {});
-chrome.storage.local.get(['saveTo', 'lastDir', 'fixedDir']).then((p) => { Object.assign(ui, p); paint() });
+$('newin-pick').onclick = () => chrome.runtime.sendMessage({ type: 'new-folders-in', title: say('newInTitle') }).catch(() => {});
+$('newin-reset').onclick = () => chrome.runtime.sendMessage({ type: 'new-folders-in', reset: true }).catch(() => {});
+chrome.storage.local.get(['saveTo', 'lastDir', 'fixedDir', 'newIn']).then((p) => { Object.assign(ui, p); paint() });
 chrome.storage.onChanged.addListener((c) => {
-  for (const k of ['saveTo', 'lastDir', 'fixedDir']) if (c[k]) ui[k] = c[k].newValue;
+  for (const k of ['saveTo', 'lastDir', 'fixedDir', 'newIn']) if (c[k]) ui[k] = c[k].newValue;
   paint();
 });
 $('prefs').onclick = (e) => {

@@ -1,11 +1,19 @@
 package io.github.jherobred.lodisave
 
-import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.gestures.ScrollableState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.round
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.foundation.gestures.scrollBy
 import kotlinx.coroutines.coroutineScope
 import androidx.compose.foundation.layout.RowScope
@@ -49,6 +57,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed as pinsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -195,6 +204,17 @@ object Library {
         prefs.trashed -= id
         prefs.favorites -= id
         prefs.hiddenFromHome -= id
+        prefs.blurred -= id
+        prefs.unblurred -= id
+    }
+
+    /** Blurs files in the grids, or shows them clear. "all" keeps the ones shown clear, "pick" the ones blurred. */
+    fun veil(ctx: Context, items: List<Saved>, on: Boolean) {
+        val prefs = Prefs(ctx)
+        val ids = items.map { "${it.id}" }.toSet()
+        if (prefs.blur == "all") prefs.unblurred = if (on) prefs.unblurred - ids else prefs.unblurred + ids
+        else prefs.blurred = if (on) prefs.blurred + ids else prefs.blurred - ids
+        changes++
     }
 
     /** Keeps files off home's Recent, or puts them back. Only LodiSave's own setting, not the file. */
@@ -248,6 +268,28 @@ object Consent {
     suspend fun ask(uris: List<android.net.Uri>) = Build.VERSION.SDK_INT >= 30 && withContext(Dispatchers.Main) { asker?.invoke(uris) } == true
 }
 
+/** Grids as two a row in their own shapes, like Pinterest, instead of three squares: the Settings choice. */
+val LocalPins = compositionLocalOf { false }
+
+/** The blur setting: "off", "all" or "pick". */
+val LocalBlur = compositionLocalOf { "off" }
+
+/** Whether a save shows blurred in the grids, by the blur setting and the files blurred or unblurred. */
+@Composable
+fun rememberVeil(): (Saved) -> Boolean {
+    val ctx = LocalContext.current
+    val mode = LocalBlur.current
+    val changes = Library.changes
+    return remember(mode, changes) {
+        val prefs = Prefs(ctx)
+        when (mode) {
+            "all" -> prefs.unblurred.let { clear -> { item: Saved -> "${item.id}" !in clear } }
+            "pick" -> prefs.blurred.let { blurred -> { item: Saved -> "${item.id}" in blurred } }
+            else -> { _: Saved -> false }
+        }
+    }
+}
+
 private val FILTERS = listOf("all", "photo", "video", "gif", "audio", "fav", "trash")
 
 /** A question with what a yes does. */
@@ -278,6 +320,10 @@ fun Library(
     var naming by remember { mutableStateOf<String?>(null) } // "" makes an album, a name renames that one
     var asking by remember { mutableStateOf<Ask?>(null) }
     var moving by remember { mutableStateOf<List<Saved>?>(null) }
+    var menu by remember { mutableStateOf<Long?>(null) } // the tile a hold opened the menu of
+    val pins = LocalPins.current
+    val veiled = rememberVeil()
+    val blurring = LocalBlur.current != "off"
     val snack = remember { SnackbarHostState() }
     val trash = filter == "trash"
     val changes = Library.changes
@@ -306,10 +352,12 @@ fun Library(
     val chosen = list.filter { it.id in picked }
     // A file the viewer moved on to, back into view, before the grid draws so it can fly back into its tile.
     val grid = rememberLazyGridState()
+    val board = rememberLazyStaggeredGridState()
     remember(seen) {
         val at = list.indexOfFirst { it.id == seen }
         // Made to be called while composing: it applies at the grid's next measure, before it draws.
-        if (at >= 0 && (at < grid.firstVisibleItemIndex || at > grid.firstVisibleItemIndex + 11)) grid.requestScrollToItem(at)
+        val first = if (pins) board.firstVisibleItemIndex else grid.firstVisibleItemIndex
+        if (at >= 0 && (at < first || at > first + if (pins) 5 else 11)) if (pins) board.requestScrollToItem(at) else grid.requestScrollToItem(at)
         at
     }
     LaunchedEffect(Unit) { delay(700); entered = true }
@@ -418,20 +466,37 @@ fun Library(
             Spacer(Modifier.size(8.dp))
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
+                @Composable
+                fun tile(i: Int, item: Saved, modifier: Modifier) = Tile(
+                    item, if (gallery) "gal" else "lib", picked.isNotEmpty(), item.id in picked, "${item.id}" in hidden, if (entered) -1 else i, modifier,
+                    pins, veiled(item), copy, menu == item.id, { menu = null },
+                    onVeil = { Library.veil(ctx, listOf(item), !veiled(item)) }, onPick = { toggle(item) },
+                    // A press that turned into picking by holding isn't a tap as well.
+                    onClick = { if (swiping) Unit else if (picked.isNotEmpty()) toggle(item) else onOpen(list.map { it.id }, i, trash) },
+                )
+                // With blur on, a hold that lets go in place opens the tile's menu; sliding still picks.
+                val hold = if (blurring) { item: Saved -> menu = item.id } else null
                 if (list.isEmpty()) Empty(copy, filter, album, query, gallery)
+                // Pinterest's phone layout: two columns of tiles in their own shapes, close to the screen's edges.
+                else if (pins) LazyVerticalStaggeredGrid(
+                    StaggeredGridCells.Fixed(2),
+                    Modifier.fillMaxSize().dragToPick(board, { p -> board.layoutInfo.visibleItemsInfo.firstOrNull { IntRect(it.offset, it.size).contains(p.round()) }?.index },
+                        list, { picked }, { picked = it }, { swiping = it }, hold),
+                    board,
+                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 120.dp + bottom),
+                    verticalItemSpacing = 8.dp, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    pinsIndexed(list, key = { _, it -> it.id }) { i, item -> tile(i, item, if (motion) Modifier.animateItem() else Modifier.animateItem(null, null, null)) }
+                }
                 else LazyVerticalGrid(
-                    GridCells.Fixed(3), Modifier.fillMaxSize().dragToPick(grid, list, { picked }, { picked = it }, { swiping = it }), grid,
+                    GridCells.Fixed(3),
+                    Modifier.fillMaxSize().dragToPick(grid, { p -> grid.layoutInfo.visibleItemsInfo.firstOrNull { IntRect(it.offset, it.size).contains(p.round()) }?.index },
+                        list, { picked }, { picked = it }, { swiping = it }, hold),
+                    grid,
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp + bottom),
                     horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    itemsIndexed(list, key = { _, it -> it.id }) { i, item ->
-                        Tile(
-                            item, if (gallery) "gal" else "lib", picked.isNotEmpty(), item.id in picked, "${item.id}" in hidden, if (entered) -1 else i,
-                            if (motion) Modifier.animateItem() else Modifier.animateItem(null, null, null),
-                            // A press that turned into picking by holding isn't a tap as well.
-                            onClick = { if (swiping) Unit else if (picked.isNotEmpty()) toggle(item) else onOpen(list.map { it.id }, i, trash) },
-                        )
-                    }
+                    itemsIndexed(list, key = { _, it -> it.id }) { i, item -> tile(i, item, if (motion) Modifier.animateItem() else Modifier.animateItem(null, null, null)) }
                 }
             }
         }
@@ -531,39 +596,61 @@ fun trashWithUndo(scope: CoroutineScope, ctx: Context, copy: Copy, items: List<S
 }
 
 /** Holding a tile picks it, and sliding on from there picks every tile between, scrolling at the
- *  grid's edges, as in a phone's own gallery. `on` hears whether a slide is going on. */
-private fun Modifier.dragToPick(grid: LazyGridState, list: List<Saved>, picked: () -> List<Long>, pick: (List<Long>) -> Unit, on: (Boolean) -> Unit) =
-    pointerInput(list) {
-        fun at(p: Offset) = grid.layoutInfo.visibleItemsInfo.firstOrNull { IntRect(it.offset, it.size).contains(p.round()) }?.index
+ *  grid's edges, as in a phone's own gallery. `at` finds the tile under a point, and `on` hears
+ *  whether a slide is going on. With `hold`, a hold that lets go without sliding goes to it instead. */
+private fun Modifier.dragToPick(
+    grid: ScrollableState, at: (Offset) -> Int?, list: List<Saved>, picked: () -> List<Long>, pick: (List<Long>) -> Unit, on: (Boolean) -> Unit,
+    hold: ((Saved) -> Unit)?,
+) =
+    pointerInput(list, hold != null) {
         val edge = 64.dp.toPx()
-        var start = -1
-        var before = emptyList<Long>()
         coroutineScope {
-            var scroll: kotlinx.coroutines.Job? = null
-            detectDragGesturesAfterLongPress(
-                onDragStart = { p ->
-                    val i = at(p) ?: return@detectDragGesturesAfterLongPress
-                    start = i
-                    before = picked() - list[i].id
-                    pick(before + list[i].id)
-                    on(true)
-                },
-                onDrag = { change, _ ->
-                    if (start < 0) return@detectDragGesturesAfterLongPress
-                    change.consume()
-                    val y = change.position.y
-                    val speed = when {
-                        y > size.height - edge -> (y - (size.height - edge)) / 3
-                        y < edge -> -(edge - y) / 3
-                        else -> 0f
+            awaitEachGesture {
+                // Watched from the first pass: a tile's own tap handling takes the press, which keeps
+                // Compose's long-press detectors from ever seeing it.
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                val moved = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                    var c = down
+                    while (c.pressed && (c.position - down.position).getDistance() <= viewConfiguration.touchSlop) {
+                        c = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: break
                     }
+                    true
+                }
+                // Let go or scrolled before the hold: a tap or a scroll, for the tile and the grid.
+                if (moved != null) return@awaitEachGesture
+                val start = at(down.position) ?: return@awaitEachGesture
+                val before = picked() - list[start].id
+                var sliding = hold == null || picked().isNotEmpty()
+                if (sliding) pick(before + list[start].id)
+                on(true)
+                var scroll: kotlinx.coroutines.Job? = null
+                try {
+                    while (true) {
+                        val c = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: break
+                        // Taken first, so the grid doesn't scroll and the tile doesn't count the hold as a tap.
+                        c.consume()
+                        if (!c.pressed) {
+                            if (!sliding) hold?.invoke(list[start])
+                            break
+                        }
+                        val y = c.position.y
+                        val speed = when {
+                            y > size.height - edge -> (y - (size.height - edge)) / 3
+                            y < edge -> -(edge - y) / 3
+                            else -> 0f
+                        }
+                        scroll?.cancel()
+                        if (speed != 0f) scroll = launch { while (true) { grid.scrollBy(speed); delay(16) } }
+                        at(c.position)?.let { k ->
+                            if (k != start) sliding = true
+                            if (sliding) pick((before + list.subList(minOf(start, k), maxOf(start, k) + 1).map { it.id }).distinct())
+                        }
+                    }
+                } finally {
                     scroll?.cancel()
-                    if (speed != 0f) scroll = launch { while (true) { grid.scrollBy(speed); delay(16) } }
-                    at(change.position)?.let { k -> pick((before + list.subList(minOf(start, k), maxOf(start, k) + 1).map { it.id }).distinct()) }
-                },
-                onDragEnd = { scroll?.cancel(); start = -1; on(false) },
-                onDragCancel = { scroll?.cancel(); start = -1; on(false) },
-            )
+                    on(false)
+                }
+            }
         }
     }
 
@@ -581,21 +668,38 @@ private fun RowScope.Act(glyph: Glyph, label: String, tint: Color = LocalTokens.
 }
 
 /** A save in a grid: its thumbnail, or its video or GIF playing silently, with what kind it is, and
- *  a round checkbox while picking. `from` names the grid, for the thumbnail that flies to the viewer. */
+ *  a round checkbox while picking. `from` names the grid, for the thumbnail that flies to the viewer.
+ *  As a `pin` it takes its own shape; `veiled`, it shows blurred and stays still. `menu` shows what a
+ *  hold offers: blur or unblur it, or pick it. */
 @Composable
-private fun Tile(item: Saved, from: String, picking: Boolean, on: Boolean, offHome: Boolean, order: Int, modifier: Modifier, onClick: () -> Unit) {
+private fun Tile(
+    item: Saved, from: String, picking: Boolean, on: Boolean, offHome: Boolean, order: Int, modifier: Modifier,
+    pin: Boolean, veiled: Boolean, copy: Copy, menu: Boolean, onMenuDone: () -> Unit, onVeil: () -> Unit, onPick: () -> Unit, onClick: () -> Unit,
+) {
     val t = LocalTokens.current
-    val thumb = rememberThumb(item)
+    val thumb = rememberThumb(item, big = pin)
     val press = remember { MutableInteractionSource() }
     val pressed = pressScale(press)
     val shrink by animateFloatAsState(if (on && LocalMotion.current) 0.86f else 1f, snap(), label = "picked")
+    // Pinterest keeps very tall and very wide pins from taking over the column.
+    val ratio = if (pin && item.width > 0 && item.height > 0) (item.width.toFloat() / item.height).coerceIn(0.5f, 2f) else 1f
     Enter(order, modifier) {
-        Hero("$from${item.id}", Modifier.fillMaxWidth().aspectRatio(1f).graphicsLayer { scaleX = pressed * shrink; scaleY = pressed * shrink }, RoundedCornerShape(if (on) 22.dp else 16.dp)) {
+        Hero("$from${item.id}", Modifier.fillMaxWidth().aspectRatio(ratio).graphicsLayer { scaleX = pressed * shrink; scaleY = pressed * shrink }, RoundedCornerShape(if (on) 22.dp else 16.dp)) {
             Box(Modifier.fillMaxSize().background(t.soft).clickable(press, null, onClick = onClick)) {
-                if (thumb != null) Image(thumb, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                if (thumb != null) Image(thumb, item.name, if (veiled) Modifier.fillMaxSize().blur(24.dp, BlurredEdgeTreatment.Rectangle) else Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 else if (item.kind == "audio") GlyphIcon(Glyph.Music, Modifier.align(Alignment.Center), t.muted, 34.dp)
-                Loop(item, Modifier.fillMaxSize())
+                if (!veiled) Loop(item, Modifier.fillMaxSize())
+                // Android 11 and older can't blur, so the tile is covered instead.
+                else Box(Modifier.fillMaxSize().background(if (Build.VERSION.SDK_INT < 31) t.soft else Color.Transparent)) {
+                    GlyphIcon(Glyph.EyeOff, Modifier.align(Alignment.Center).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)).padding(8.dp), Color.White, 22.dp)
+                }
                 Badges(item, offHome)
+                DropdownMenu(menu, onMenuDone, containerColor = t.surface) {
+                    DropdownMenuItem({ Text(if (veiled) copy.unblur else copy.blurIt, fontFamily = Geist, color = t.ink) }, { onMenuDone(); onVeil() },
+                        leadingIcon = { GlyphIcon(if (veiled) Glyph.Eye else Glyph.EyeOff, size = 20.dp) })
+                    DropdownMenuItem({ Text(copy.pickIt, fontFamily = Geist, color = t.ink) }, { onMenuDone(); onPick() },
+                        leadingIcon = { GlyphIcon(Glyph.Check, size = 20.dp) })
+                }
                 if (picking) Box(Modifier.align(Alignment.TopEnd).padding(7.dp).size(24.dp).clip(CircleShape)
                     .background(if (on) t.pick else Color.Black.copy(alpha = 0.3f)).border(2.dp, Color.White, CircleShape), contentAlignment = Alignment.Center) {
                     if (on) GlyphIcon(Glyph.Check, tint = Color.White, size = 16.dp)

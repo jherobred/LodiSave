@@ -22,6 +22,8 @@ pub struct Item {
     pub modified: u64,
     pub fav: bool,
     pub hidden: bool,
+    pub blur: bool,
+    pub clear: bool,
 }
 
 pub fn kind(name: &str) -> Option<&'static str> {
@@ -40,6 +42,12 @@ pub struct Meta {
     pub fav: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// Blurred in the panel while its blur setting is "Picked".
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub blur: bool,
+    /// Shown clear while the blur setting is "All".
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clear: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
 }
@@ -200,7 +208,7 @@ pub fn list(dir: &Path, store: &Store) -> (Vec<Item>, Vec<String>) {
             let modified = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
             let album = rel.split_once('/').map_or("", |(a, _)| a).to_string();
             let meta = store.get(&rel);
-            Some(Item { path: at(dir, &rel), name, album, kind, bytes: m.len(), modified, fav: meta.fav, hidden: meta.hidden })
+            Some(Item { path: at(dir, &rel), name, album, kind, bytes: m.len(), modified, fav: meta.fav, hidden: meta.hidden, blur: meta.blur, clear: meta.clear })
         })
         .collect();
     let mut albums: Vec<String> = std::fs::read_dir(dir)

@@ -169,6 +169,23 @@ async function chooseFolder(title) {
   return dir;
 }
 
+// A folder picked in the bar or the popup becomes the one saved to next. `fixed` makes it the one folder.
+async function useFolder(dir, fixed) {
+  await keepFolder(dir);
+  const { saveTo = 'downloads' } = await chrome.storage.local.get('saveTo');
+  if (fixed) await chrome.storage.local.set({ saveTo: 'fixed', fixedDir: dir });
+  else if (saveTo === 'downloads') await chrome.storage.local.set({ saveTo: 'last' });
+  else if (saveTo === 'fixed') await chrome.storage.local.set({ fixedDir: dir });
+}
+
+// A new folder named in the bar, made in the folder the popup's setting names, or in LodiSave's own.
+async function makeFolder(name) {
+  const { newIn = '' } = await chrome.storage.local.get('newIn');
+  const { dir } = await app({ op: 'mkdir', parent: newIn, name });
+  await useFolder(dir);
+  return dir;
+}
+
 // Where each item goes, by the Save to setting: Downloads (null), the folder saved to last, one
 // folder always, or a folder per item, from `route` (item URL to folder, picked in the bar) or
 // asked one by one. { cancelled } when the user closes the folder picker.
@@ -372,12 +389,19 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   else if (msg.type === 'choose-folder') {
     // From the bar's folder button or the popup's settings: the folder becomes the one saved to next.
     chooseFolder(msg.title).then(async (dir) => {
-      const { saveTo = 'downloads' } = await chrome.storage.local.get('saveTo');
-      if (dir && msg.fixed) await chrome.storage.local.set({ saveTo: 'fixed', fixedDir: dir });
-      else if (dir && saveTo === 'downloads') await chrome.storage.local.set({ saveTo: 'last' });
-      else if (dir && saveTo === 'fixed') await chrome.storage.local.set({ fixedDir: dir });
+      if (dir) await useFolder(dir, msg.fixed);
       reply({ dir });
     }, (e) => reply({ error: e.message, noApp: true }));
+  } else if (msg.type === 'use-folder') useFolder(msg.dir).then(() => reply({ dir: msg.dir }));
+  else if (msg.type === 'make-folder') makeFolder(msg.name).then((dir) => reply({ dir }), (e) => reply({ error: e.message, noApp: !port }));
+  // The popup's "New folders go in" setting: a folder picked with Windows' picker, or '' for LodiSave's own.
+  else if (msg.type === 'new-folders-in') {
+    (async () => {
+      const { newIn = '' } = await chrome.storage.local.get('newIn');
+      if (msg.reset) return '';
+      const start = newIn || (await app({ op: 'home' })).dir;
+      return (await app({ op: 'folder', title: msg.title, start })).dir ?? newIn;
+    })().then(async (dir) => { await chrome.storage.local.set({ newIn: dir }); reply({ dir }) }, (e) => reply({ error: e.message }));
   } else if (msg.type === 'app-ready') app({ op: 'ping' }).then(() => reply(true), () => reply(false));
   else {
     if (msg.type === 'picked' && tabId) chrome.tabs.sendMessage(tabId, { type: 'frame-picked', frameId: sender.frameId, count: msg.count }, { frameId: 0 }).catch(() => {});

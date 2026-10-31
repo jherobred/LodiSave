@@ -349,7 +349,23 @@ await check('Save into a chosen folder through the LodiSave app', 'native host',
     await sw.evaluate(() => chrome.storage.local.set({ saveTo: 'downloads' }));
     const counts = [dir, other].map((d) => fs.readdirSync(d).length);
     if (counts.join() !== '4,1') throw new Error(`the folders hold ${counts.join(' and ')} files, expected 4 and 1`);
-    return `MediaSource capture ${same(video, original('clip.webm'))}, ${same(photo, original('a.jpg'))} named ${path.basename(photo.filename)}, Referer-guarded photo saved, web page refused, Ask for each sent 2 picks to 2 folders`;
+    // The bar's folder list makes a folder, inside the one "New folders go in" names, and saves there.
+    await sw.evaluate((t) => chrome.storage.local.set({ saveTo: 'last', newIn: t }), tmp);
+    const { page: mk } = await open('picker');
+    const one = await mk.locator('#one img').boundingBox();
+    await mk.mouse.move(one.x + one.width / 2, one.y + one.height / 2, { steps: 4 });
+    await mk.locator('lodisave-picker .check:not(.on)').click({ delay: 150 });
+    await mk.locator('lodisave-picker .bar .dest').click();
+    await mk.locator('lodisave-picker .folders input').fill('Made in the bar');
+    await mk.keyboard.press('Enter');
+    await mk.locator('lodisave-picker .folders').waitFor({ state: 'detached', timeout: 5000 });
+    await mk.locator('lodisave-picker .bar .save').click();
+    await mk.waitForFunction(() => document.querySelector('lodisave-picker')?.dataset.state === 'done', null, { timeout: 20000 });
+    await mk.close();
+    await sw.evaluate(() => chrome.storage.local.set({ saveTo: 'downloads', newIn: '' }));
+    const made = path.join(tmp, 'Made in the bar');
+    if (!fs.existsSync(made) || fs.readdirSync(made).length !== 1) throw new Error(`the new folder holds ${fs.existsSync(made) ? fs.readdirSync(made).join(', ') : 'nothing, it was not made'}`);
+    return `MediaSource capture ${same(video, original('clip.webm'))}, ${same(photo, original('a.jpg'))} named ${path.basename(photo.filename)}, Referer-guarded photo saved, web page refused, Ask for each sent 2 picks to 2 folders, a folder made in the bar took its pick`;
   } finally {
     if (before) execFileSync('reg', ['add', key, '/ve', '/t', 'REG_SZ', '/d', before, '/f'], { stdio: 'ignore' });
     else spawnSync('reg', ['delete', key, '/f'], { stdio: 'ignore' });

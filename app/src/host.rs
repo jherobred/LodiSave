@@ -8,6 +8,8 @@
 //! answer with that id, with `error` when it failed:
 //! - {op:"ping"} → {version}
 //! - {op:"folder", title, start} → {dir}, null when the picker was closed
+//! - {op:"home"} → {dir}: LodiSave's own folder, Downloads\LodiSave
+//! - {op:"mkdir", parent, name} → {dir}: a folder made in `parent`, or in LodiSave's own folder when it's ""
 //! - {op:"open", dir, name} → {file, path}: a new file named like `name`, never over another
 //! - {op:"write", file, data} → {}: base64 bytes added to the end
 //! - {op:"close", file} → {path}: renamed when its bytes are another type, "nothing" for a web page
@@ -25,7 +27,10 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Security::Cryptography::{BCRYPT_SHA256_ALG_HANDLE, BCryptHash};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree};
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, REG_SZ, RegSetKeyValueW};
-use windows::Win32::UI::Shell::{FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, IShellItem, SHCreateItemFromParsingName, SIGDN_FILESYSPATH};
+use windows::Win32::UI::Shell::{
+    FOLDERID_Downloads, FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, IShellItem, KNOWN_FOLDER_FLAG, SHCreateItemFromParsingName,
+    SHGetKnownFolderPath, SIGDN_FILESYSPATH,
+};
 use windows::core::{HSTRING, PCWSTR};
 
 pub const NAME: &str = "io.github.jherobred.lodisave";
@@ -86,6 +91,17 @@ fn handle(r: &Value, owner: isize, files: &mut Open) -> Result<Value, String> {
     match text("op") {
         "ping" => Ok(json!({ "version": env!("CARGO_PKG_VERSION") })),
         "folder" => Ok(json!({ "dir": pick_folder(owner, text("title"), Path::new(text("start"))) })),
+        "home" => Ok(json!({ "dir": home().ok_or("folder")? })),
+        "mkdir" => {
+            let parent = if text("parent").is_empty() { home().ok_or("folder")? } else { PathBuf::from(text("parent")) };
+            // A chosen folder that's gone isn't made again: the user picks another.
+            if !text("parent").is_empty() && !parent.is_dir() {
+                return Err("folder".into());
+            }
+            let dir = parent.join(crate::library::clean(text("name"))?);
+            std::fs::create_dir_all(&dir).map_err(|_| "blocked".to_string())?;
+            Ok(json!({ "dir": dir }))
+        }
         "open" => {
             let dir = Path::new(text("dir"));
             if !dir.is_dir() {
@@ -125,6 +141,19 @@ fn handle(r: &Value, owner: isize, files: &mut Open) -> Result<Value, String> {
             Ok(json!({}))
         }
         _ => Err("op".into()),
+    }
+}
+
+/// LodiSave's own folder, where the app saves too: Downloads\LodiSave, or LODISAVE_DIR in tests.
+fn home() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("LODISAVE_DIR") {
+        return Some(dir.into());
+    }
+    unsafe {
+        let p = SHGetKnownFolderPath(&FOLDERID_Downloads, KNOWN_FOLDER_FLAG(0), None).ok()?;
+        let downloads = p.to_string().ok();
+        CoTaskMemFree(Some(p.0 as _));
+        Some(PathBuf::from(downloads?).join("LodiSave"))
     }
 }
 

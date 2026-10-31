@@ -20,6 +20,7 @@ const pref = (k, d) => { try { return localStorage.getItem(k) || d } catch { ret
 const keep = (k, v) => { try { localStorage.setItem(k, v) } catch {} };
 const ui = {
   lang: pref('lang', 'en'), motion: pref('motion', 'on'), autostart: 'off', recent: pref('recent', 'show'), gaming: pref('gaming', 'auto'), playing: false,
+  layout: pref('layout', 'grid'), blur: pref('blur', 'off'), col: 0,
   state: 'idle', link: '', job: null, files: [], error: null, captured: false, account: null,
   view: 'home', album: null, filter: 'all', sort: pref('sort', 'new'), query: '', picking: false, picked: new Set(),
   list: [], at: -1, from: 'home', step: 0,
@@ -174,6 +175,31 @@ async function readClipboard() {
   }
 }
 
+// Blur: "all" blurs every save but the ones shown clear, "pick" only the ones blurred.
+const veiled = (r) => (ui.blur === 'all' ? !r.clear : ui.blur === 'pick' && r.blur);
+
+// The shape of each file, for the Pinterest layout, learned as files load and kept between runs.
+const ratios = new Map(Object.entries((() => { try { return JSON.parse(pref('ratios', '{}')) } catch { return {} } })()));
+let keepRatios = 0;
+function learn(r, w, h) {
+  if (!w || !h) return;
+  // Like Pinterest, very tall and very wide files don't take over the column.
+  const ar = Math.min(2, Math.max(0.5, w / h));
+  if (Math.abs((ratios.get(r.path) || 0) - ar) < 0.01) return;
+  ratios.set(r.path, ar);
+  const t = tiles.get(r.path);
+  if (t) shape(t, r);
+  clearTimeout(keepRatios);
+  keepRatios = setTimeout(() => keep('ratios', JSON.stringify(Object.fromEntries(ratios))), 1000);
+}
+
+// In the Pinterest layout a tile takes its file's shape and spans as many 4px grid rows as that needs.
+function shape(t, r) {
+  const ar = ratios.get(r.path) || 1;
+  t.style.setProperty('--ar', ar);
+  t.style.setProperty('--rows', Math.ceil((ui.col / ar + 8) / 4));
+}
+
 // Thumbnails load when they scroll into view: one watcher for Recent, one for the library grid.
 const loader = (root) => new IntersectionObserver((entries, watcher) => {
   for (const e of entries) {
@@ -190,7 +216,9 @@ function thumb(r, watcher) {
   const later = (media, src) => { media.dataset.src = src; watcher.observe(media); return media };
   const src = convertFileSrc(r.path);
   if (r.kind === 'image') {
-    box.append(later(el('img', '', { alt: '', decoding: 'async', draggable: false }), src));
+    const img = el('img', '', { alt: '', decoding: 'async', draggable: false });
+    img.onload = () => learn(r, img.naturalWidth, img.naturalHeight);
+    box.append(later(img, src));
   } else if (r.kind === 'gif') {
     // The first frame, drawn as it loads. The GIF itself plays on hover.
     const still = el('canvas'), img = el('img', '', { alt: '', draggable: false });
@@ -199,16 +227,18 @@ function thumb(r, watcher) {
       still.width = Math.max(1, Math.round(img.naturalWidth * s));
       still.height = Math.max(1, Math.round(img.naturalHeight * s));
       still.getContext('2d').drawImage(img, 0, 0, still.width, still.height);
+      learn(r, img.naturalWidth, img.naturalHeight);
     };
     box.append(still, later(img, src), el('span', 'tag', { textContent: 'GIF' }));
   } else if (r.kind === 'video') {
     const video = el('video', '', { muted: true, preload: 'metadata', disablePictureInPicture: true });
     const time = el('span', 'tag time', { hidden: true });
-    video.onloadedmetadata = () => { time.textContent = clock(video.duration); time.hidden = !time.textContent };
+    video.onloadedmetadata = () => { time.textContent = clock(video.duration); time.hidden = !time.textContent; learn(r, video.videoWidth, video.videoHeight) };
     box.append(later(video, `${src}#t=0.5`), time);
   } else {
     box.append(icon('music', 'big'));
   }
+  box.append(icon('eye-off', 'veil-mark'));
   return box;
 }
 
@@ -232,9 +262,12 @@ function renderRecent() {
     const item = el('button', 'item', { type: 'button', title: r.name });
     item.style.setProperty('--i', i);
     item.dataset.key = r.path;
-    item.append(thumb(r, homeLoader), el('span', 'name', { textContent: r.name }),
+    const th = thumb(r, homeLoader);
+    th.classList.toggle('veil', veiled(r));
+    holdable(item, r.path);
+    item.append(th, el('span', 'name', { textContent: r.name }),
       el('span', 'meta', { textContent: `${say('ago', Math.max(0, (Date.now() - r.modified) / 1000))} · ${size(r.bytes)}` }));
-    item.onclick = () => openViewer(list, i, item, 'home');
+    item.onclick = () => (held?.path === r.path ? offerHeld() : openViewer(list, i, item, 'home'));
     box.append(item);
   });
   fitRecent();
@@ -372,9 +405,12 @@ function tileFor(r) {
     const th = thumb(r, gridLoader);
     th.append(marks);
     t.append(th, tick, el('span', 'tname'));
-    t.onclick = (e) => tap(r.path, e);
+    t.onclick = (e) => (held?.path === r.path ? offerHeld() : tap(r.path, e));
+    holdable(t, r.path);
     tiles.set(r.path, t);
   }
+  t.firstChild.classList.toggle('veil', veiled(r));
+  if (ui.layout === 'pins') shape(t, r);
   t.title = r.name;
   t.querySelector('.tname').textContent = r.name;
   t.classList.toggle('fav', r.fav);
@@ -390,6 +426,11 @@ function renderGrid(mode = 'none') {
   const before = new Map();
   if (mode === 'flip' && !still()) for (const t of grid.children) before.set(t.dataset.key, t.getBoundingClientRect());
   ui.listed = shown();
+  grid.classList.toggle('pins', ui.layout === 'pins');
+  if (ui.layout === 'pins') {
+    const g = getComputedStyle(grid);
+    ui.col = (grid.clientWidth - parseFloat(g.paddingLeft) - parseFloat(g.paddingRight) - parseFloat(g.columnGap)) / 2;
+  }
   grid.replaceChildren(...ui.listed.map(tileFor));
   if (mode === 'enter') {
     grid.scrollTop = 0;
@@ -466,8 +507,15 @@ $('select-all').onclick = () => {
   renderGrid();
 };
 $('query').oninput = (e) => { ui.query = e.target.value; renderGrid('flip') };
+// The filters are a row wider than the panel: a mouse wheel scrolls them sideways.
+$('filters').addEventListener('wheel', (e) => {
+  if (e.deltaX || !e.deltaY) return;
+  e.preventDefault();
+  $('filters').scrollLeft += e.deltaY;
+}, { passive: false });
 $('filters').onclick = (e) => {
-  const f = e.target.closest('[data-f]')?.dataset.f;
+  const b = e.target.closest('[data-f]'), f = b?.dataset.f;
+  b?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: still() ? 'auto' : 'smooth' });
   if (!f || f === ui.filter) return;
   ui.filter = f;
   renderGrid('flip');
@@ -492,7 +540,46 @@ async function mark(paths, what, on) {
   renderRecent();
   if (ui.view === 'library') renderGrid('flip');
   paintViewer();
-  toast(what === 'fav' ? (on ? say('faved', paths.length) : say('unfaved')) : say(on ? 'hiddenHome' : 'shownHome'));
+  if (what === 'fav') toast(on ? say('faved', paths.length) : say('unfaved'));
+  else if (what === 'hidden') toast(say(on ? 'hiddenHome' : 'shownHome'));
+}
+
+// While blur is on, holding a save or right-clicking it offers to blur or unblur it. A hold's menu
+// opens on the click that ends it, so letting go doesn't close it again, and that click opens nothing else.
+let held = null;
+function holdable(node, path) {
+  let timer = 0;
+  node.addEventListener('pointerdown', (e) => {
+    held = null;
+    if (e.button !== 0 || ui.blur === 'off' || ui.picking) return;
+    timer = setTimeout(() => { held = { path, x: e.clientX, y: e.clientY } }, 500);
+  });
+  for (const t of ['pointerup', 'pointerleave', 'pointercancel']) node.addEventListener(t, () => clearTimeout(timer));
+  node.addEventListener('contextmenu', (e) => {
+    if (ui.blur === 'off') return;
+    e.preventDefault();
+    offerVeil(path, e.clientX, e.clientY);
+  });
+}
+
+function offerHeld() {
+  const { path, x, y } = held;
+  held = null;
+  offerVeil(path, x, y);
+}
+
+function offerVeil(path, x, y) {
+  const r = item(path), menu = $('veil-menu');
+  if (!r) return;
+  const on = !veiled(r);
+  $('veil-it').textContent = say(on ? 'blurIt' : 'unblur');
+  $('veil-it').onclick = () => {
+    menu.hidePopover();
+    ui.blur === 'all' ? mark([path], 'clear', !on) : mark([path], 'blur', on);
+  };
+  menu.style.left = `${Math.min(x, innerWidth - 170)}px`;
+  menu.style.top = `${Math.min(y, innerHeight - 60)}px`;
+  menu.showPopover();
 }
 
 // Deleting goes to the Recycle Bin; Undo brings the files back from it.
@@ -1192,7 +1279,8 @@ document.addEventListener('click', (e) => {
   if (key === 'autostart') invoke('set_autostart', { on: v === 'on' });
   else keep(key, v);
   if (key === 'gaming') invoke('set_gaming', { auto: v === 'auto' });
-  if (key === 'recent') renderRecent();
+  if (key === 'recent' || key === 'blur' || key === 'layout') renderRecent();
+  if ((key === 'blur' || key === 'layout') && ui.view === 'library') renderGrid();
   if (key === 'lang' && !$('intro').hidden) return renderStep();
   if (key === 'lang') renderRecent(), ui.view === 'accounts' && loadAccounts();
   paint();

@@ -234,13 +234,16 @@ fn library(app: AppHandle, store: State<Store>) -> Library {
     Library { items, albums, ffmpeg: library::ffmpeg() }
 }
 
-/// Marks files as favorites ("fav") or hidden from the home page ("hidden"), or unmarks them.
+/// Marks files as favorites ("fav"), hidden from the home page ("hidden"), blurred ("blur") or
+/// shown clear while everything else is blurred ("clear"), or unmarks them.
 #[tauri::command]
 fn mark(app: AppHandle, store: State<Store>, paths: Vec<String>, what: String, on: bool) -> Result<(), String> {
     let rels = rels(&app, &paths)?;
     match what.as_str() {
         "fav" => store.edit(&rels, |m| m.fav = on),
         "hidden" => store.edit(&rels, |m| m.hidden = on),
+        "blur" => store.edit(&rels, |m| m.blur = on),
+        "clear" => store.edit(&rels, |m| m.clear = on),
         _ => return Err("what".into()),
     }
     Ok(())

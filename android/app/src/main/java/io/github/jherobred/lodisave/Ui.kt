@@ -140,16 +140,22 @@ object Thumbs {
 
     fun get(id: Long): ImageBitmap? = cache.get(id)
 
-    suspend fun load(ctx: Context, item: Saved): ImageBitmap? = cache.get(item.id) ?: withContext(Dispatchers.IO) {
-        runCatching { ctx.contentResolver.loadThumbnail(item.uri, android.util.Size(320, 320), null).asImageBitmap() }.getOrNull()
-            ?.also { cache.put(item.id, it) }
+    /** A `big` one, for Pinterest's wider tiles, is kept under the id's negative. */
+    suspend fun load(ctx: Context, item: Saved, big: Boolean = false): ImageBitmap? {
+        val key = if (big) -item.id - 1 else item.id
+        val side = if (big) 640 else 320
+        return cache.get(key) ?: withContext(Dispatchers.IO) {
+            runCatching { ctx.contentResolver.loadThumbnail(item.uri, android.util.Size(side, side), null).asImageBitmap() }.getOrNull()
+                ?.also { cache.put(key, it) }
+        }
     }
 }
 
 @Composable
-fun rememberThumb(item: Saved): ImageBitmap? {
+fun rememberThumb(item: Saved, big: Boolean = false): ImageBitmap? {
     val ctx = LocalContext.current
-    return produceState(Thumbs.get(item.id), item.id) { value = Thumbs.load(ctx, item) }.value
+    // A big one starts from the small one while it loads.
+    return produceState(Thumbs.get(if (big) -item.id - 1 else item.id) ?: Thumbs.get(item.id), item.id, big) { value = Thumbs.load(ctx, item, big) }.value
 }
 
 /** The shared transition around the screens, and the screen a composable is on, for [Hero]. */

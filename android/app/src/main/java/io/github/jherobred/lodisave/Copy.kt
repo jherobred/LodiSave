@@ -324,6 +324,19 @@ class Copy(val tl: Boolean) {
     val emptyGallery = t("No photos or videos on this phone yet", "Wala pang photo o video sa phone na ito")
     val loops = t("Play videos and GIFs in grids", "I-play ang videos at GIFs sa grids")
     val loopsHint = t("Silent, on a loop. Tap one to watch it with sound.", "Walang tunog, paulit-ulit. I-tap para mapanood nang may tunog.")
+    val layout = t("Grid", "Grid")
+    val layoutGrid = t("Squares", "Parisukat")
+    val layoutPins = t("Pinterest", "Pinterest")
+    val blur = t("Blur", "Blur")
+    val blurAll = t("All", "Lahat")
+    val blurPicked = t("Picked", "Pinili")
+    val blurHint = t(
+        "All blurs every photo and video until you hold one and unblur it. Picked blurs only the ones you hold and blur.",
+        "Sa Lahat, naka-blur ang bawat photo at video hanggang i-hold mo ang isa at i-unblur. Sa Pinili, ang mga ini-hold at bi-nlur mo lang ang naka-blur.",
+    )
+    val blurIt = t("Blur", "I-blur")
+    val unblur = t("Unblur", "I-unblur")
+    val pickIt = t("Select", "Piliin")
 
     // Viewer extras
     val saveTurned = t("Save it turned", "I-save nang ganito")
@@ -458,6 +471,20 @@ class Prefs(ctx: Context) {
     var loops: Boolean
         get() = sp.getBoolean("loops", true)
         set(v) = sp.edit { putBoolean("loops", v) }
+    /** Grids as "grid" (three squares a row) or "pins" (two a row in their own shapes, like Pinterest). */
+    var layout: String
+        get() = sp.getString("layout", "grid") ?: "grid"
+        set(v) = sp.edit { putString("layout", v) }
+    /** "off", "all" (every grid tile blurred but the ones in `unblurred`) or "pick" (only the ones in `blurred`). */
+    var blur: String
+        get() = sp.getString("blur", "off") ?: "off"
+        set(v) = sp.edit { putString("blur", v) }
+    var blurred: Set<String>
+        get() = sp.getStringSet("blurred", null).orEmpty().toSet()
+        set(v) = sp.edit { putStringSet("blurred", v) }
+    var unblurred: Set<String>
+        get() = sp.getStringSet("unblurred", null).orEmpty().toSet()
+        set(v) = sp.edit { putStringSet("unblurred", v) }
     /** Drive backs up on its own: "off", "days" (older than `backupDays`) or "date" (from before `backupBefore`). */
     var backupRule: String
         get() = sp.getString("backupRule", "off") ?: "off"
