@@ -409,6 +409,87 @@ class Copy(val tl: Boolean) {
     )
     val threadsStories = t("Threads has no stories. These are the latest posts.", "Walang stories ang Threads. Ito ang mga pinakabagong posts.")
 
+    // Locks, password recovery, pins, folder blur, tags and Saved from.
+    val lock = t("Lock", "I-lock")
+    val lockTitle = t("Lock with a password", "I-lock gamit ang password")
+    fun lockSub(n: Int) = t(
+        "${if (n == 1) "The file is" else "All $n files are"} encrypted and kept inside LodiSave, out of your gallery and away from other apps.",
+        "Ie-encrypt ${if (n == 1) "ang file" else "ang $n na files"} at itatago sa loob ng LodiSave, wala na sa gallery mo at hindi maaabot ng ibang apps.",
+    )
+    val lockNoRecovery = t(
+        "If you forget the password, they can't be opened. Link an authenticator in Settings first, and a code from it can open them instead.",
+        "Kapag nakalimutan mo ang password, hindi na sila mabubuksan. Mag-link muna ng authenticator sa Settings, para mabuksan sila ng code mula roon.",
+    )
+    val lockWithRecovery = t("Your authenticator can open these too, if you forget the password.", "Kaya rin silang buksan ng authenticator mo kapag nakalimutan mo ang password.")
+    val password = t("Password", "Password")
+    val passwordAgain = t("Type it again", "I-type ulit")
+    val passwordShort = t("Use at least 4 characters.", "Gumamit ng hindi bababa sa 4 na characters.")
+    val passwordsDiffer = t("The passwords don't match.", "Hindi magkapareho ang mga password.")
+    fun locking(i: Int, n: Int) = t("Locking $i of $n…", "Ini-lock ang $i sa $n…")
+    fun lockedN(done: Int, all: Int) = if (done == all) t("Locked ${files(done)}", "Na-lock ang ${files(done)}")
+        else t("Locked $done of $all. The rest stayed as they were.", "Na-lock ang $done sa $all. Hindi nagalaw ang iba.")
+    val locked = t("Locked", "Naka-lock")
+    val unlocked = t("Unlocked", "Naka-unlock")
+    val lockedFile = t("Locked file", "Naka-lock na file")
+    val unlockTitle = t("Unlock to view", "I-unlock para makita")
+    val unlockSub = t("They open in LodiSave only, until you lock them again. The files stay locked.", "Sa LodiSave lang sila bubukas hanggang i-lock mo ulit. Naka-lock pa rin ang mga file.")
+    val unlock = t("Unlock", "I-unlock")
+    val wrongPassword = t("That password doesn't open it.", "Hindi iyan ang password nito.")
+    val forgot = t("Forgot the password? Use your authenticator", "Nakalimutan ang password? Gamitin ang authenticator")
+    val codeTitle = t("Use your authenticator", "Gamitin ang authenticator")
+    val codeSub = t("Open your authenticator app and type the 6-digit code for LodiSave.", "Buksan ang authenticator app mo at i-type ang 6-digit na code para sa LodiSave.")
+    fun codeError(code: String) = when (code) {
+        "code" -> t("That code doesn't match. Check that your phone's clock is right.", "Hindi tugma ang code. Tingnan kung tama ang oras ng phone mo.")
+        "used" -> t("That code was just used. Wait for the next one.", "Nagamit na ang code na iyan. Hintayin ang susunod.")
+        "wait" -> t("Too many wrong codes. Try again in a minute.", "Sobrang daming maling code. Subukan ulit pagkalipas ng isang minuto.")
+        "expired" -> t("Setup timed out. Start again.", "Nag-time out ang setup. Ulitin.")
+        else -> t("No authenticator is linked.", "Walang naka-link na authenticator.")
+    }
+    val notLinked = t("No authenticator is linked, so only the password opens this file.", "Walang naka-link na authenticator, kaya password lang ang makakapagbukas sa file na ito.")
+    val beforeLink = t("This file was locked before your authenticator was linked, so only its password opens it.", "Na-lock ang file na ito bago mo na-link ang authenticator, kaya password lang nito ang makakapagbukas.")
+    val openedByCode = t("Opened with your authenticator. You can set a new password.", "Nabuksan gamit ang authenticator. Puwede ka nang mag-set ng bagong password.")
+    val removePassword = t("Remove the password", "Tanggalin ang password")
+    fun backInGallery(n: Int) = t("Back in your gallery: ${files(n)}", "Bumalik sa gallery mo: ${files(n)}")
+    val newPassword = t("Set a new password", "Mag-set ng bagong password")
+    val newPasswordSub = t("The old password stops working. Your authenticator still opens it.", "Hindi na gagana ang lumang password. Mabubuksan pa rin ito ng authenticator mo.")
+    val newPasswordSet = t("New password set", "Na-set ang bagong password")
+    val lockAgain = t("Lock again", "I-lock ulit")
+    val lockedAgain = t("Locked again", "Naka-lock na ulit")
+    val deleteForGoodLocked = t("Delete this locked file for good? It can't be brought back.", "Burahin nang tuluyan ang naka-lock na file na ito? Hindi na ito maibabalik.")
+    val recovery = t("Password recovery", "Password recovery")
+    val recoveryOff = t(
+        "Forget a password and a 6-digit code from Google Authenticator, or any authenticator app, opens the file instead. Files locked before you link it still need their password.",
+        "Kapag nakalimutan mo ang password, mabubuksan ang file ng 6-digit na code mula sa Google Authenticator o kahit anong authenticator app. Password pa rin ang kailangan ng mga na-lock bago mo ito na-link.",
+    )
+    val recoveryOn = t(
+        "On. A code from your authenticator opens files locked since you linked it. It works on this phone only.",
+        "Naka-on. Mabubuksan ng code mula sa authenticator mo ang mga na-lock mula nang i-link mo ito. Sa phone na ito lang ito gumagana.",
+    )
+    val linkAuthenticator = t("Link an authenticator", "Mag-link ng authenticator")
+    val addToApp = t("Add to my authenticator app", "Idagdag sa authenticator app ko")
+    val setupKey = t("Or add an account in the app and type this setup key:", "O magdagdag ng account sa app at i-type ang setup key na ito:")
+    val copyKey = t("Copy key", "I-copy ang key")
+    val keyCopied = t("Setup key copied", "Na-copy ang setup key")
+    val typeCode = t("Then type the 6-digit code it shows", "Tapos i-type ang 6-digit na code na lalabas")
+    val linkIt = t("Link", "I-link")
+    val linked = t("Authenticator linked", "Naka-link na ang authenticator")
+    val turnOff = t("Turn off", "I-off")
+    val turnOffSub = t("Locked files will open only with their passwords. Type a code from your authenticator to confirm.", "Password na lang ang makakapagbukas sa mga naka-lock na file. Mag-type ng code mula sa authenticator para kumpirmahin.")
+    val noAuthApp = t("No authenticator app found. Install Google Authenticator, or type the setup key in your app.", "Walang nakitang authenticator app. Mag-install ng Google Authenticator, o i-type ang setup key sa app mo.")
+    val pin = t("Pin", "I-pin")
+    val unpin = t("Unpin", "Alisin sa pin")
+    val pinnedFolders = t("Pinned folders", "Naka-pin na folders")
+    val pinAll = t("All", "Lahat")
+    val pinPicked = t("Picked", "Pinili")
+    val pinHint = t("Pinned folders come first. Hold a folder to pin it, blur it or lock it.", "Nauuna ang naka-pin na folders. Pindutin nang matagal ang folder para i-pin, i-blur o i-lock ito.")
+    val blurFolder = t("Blur folder", "I-blur ang folder")
+    val unblurFolder = t("Unblur folder", "Alisin ang blur sa folder")
+    val lockFolder = t("Lock folder", "I-lock ang folder")
+    val tag = t("Tag", "Tag")
+    val tags = t("Tags", "Tags")
+    val tagHint = t("New tags, comma between", "Bagong tags, may comma sa pagitan")
+    fun tagged(n: Int) = t("Tagged ${files(n)}", "Na-tag ang ${files(n)}")
+
     companion object {
         fun of(ctx: Context) = Copy(Prefs(ctx).lang == "tl")
     }
@@ -500,4 +581,26 @@ class Prefs(ctx: Context) {
     var freeDays: Int
         get() = sp.getInt("freeDays", -1)
         set(v) = sp.edit { putInt("freeDays", v) }
+    /** Folders pinned first: "pick" pins only `pinned`, "all" pins every folder but `unpinned`. */
+    var pinMode: String
+        get() = sp.getString("pinMode", "pick") ?: "pick"
+        set(v) = sp.edit { putString("pinMode", v) }
+    var pinned: Set<String>
+        get() = sp.getStringSet("pinned", null).orEmpty().toSet()
+        set(v) = sp.edit { putStringSet("pinned", v) }
+    var unpinned: Set<String>
+        get() = sp.getStringSet("unpinned", null).orEmpty().toSet()
+        set(v) = sp.edit { putStringSet("unpinned", v) }
+    fun isPinned(folder: String) = if (pinMode == "all") folder !in unpinned else folder in pinned
+    /** Folders (gallery paths or album names) whose files all show blurred. */
+    var blurredFolders: Set<String>
+        get() = sp.getStringSet("blurredFolders", null).orEmpty().toSet()
+        set(v) = sp.edit { putStringSet("blurredFolders", v) }
+    /** Tags by MediaStore id, as JSON: {"123": ["beach", "family"]}. */
+    var tags: Map<String, List<String>>
+        get() = runCatching {
+            val o = org.json.JSONObject(sp.getString("tags", "{}") ?: "{}")
+            o.keys().asSequence().associateWith { k -> o.getJSONArray(k).let { a -> List(a.length()) { a.getString(it) } } }
+        }.getOrElse { emptyMap() }
+        set(v) = sp.edit { putString("tags", org.json.JSONObject(v.filterValues { it.isNotEmpty() }.mapValues { org.json.JSONArray(it.value) }).toString()) }
 }

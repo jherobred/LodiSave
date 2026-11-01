@@ -120,6 +120,11 @@ button:disabled { cursor: not-allowed; color: var(--muted); background-color: va
 .tags button { width: auto; min-height: 28px; padding: 3px 10px; gap: 6px; border-radius: var(--r-pill); background: var(--soft); font-size: 12.5px }
 .tags button em { font-style: normal; color: var(--muted) }
 .side-foot { margin-top: 10px; color: var(--muted) }
+/* Coming in a later version: still there, faded, and it says so. */
+.ghost { opacity: .5 }
+.ghost:hover { opacity: .7 }
+.nav .later { font-style: normal; font-size: 11.5px; color: var(--muted); padding: 1px 8px; border-radius: var(--r-pill); background: var(--soft) }
+.side-shut .nav .later { display: none }
 #lock-now span { color: var(--ink) }
 /* Shut, the sidebar keeps its icons: views, pinned folders and settings. */
 .side-shut .side { padding: 0 10px 12px }

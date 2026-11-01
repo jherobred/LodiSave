@@ -200,6 +200,35 @@ def clean_name(s):
     return s.strip().rstrip('.').strip() or 'lodisave'
 
 
+# Social apps by host, named in saved files, as app_of in app/src/links.rs. Other sites stay unnamed.
+APPS = [(('instagram.com',), 'Instagram'), (('threads.net', 'threads.com'), 'Threads'), (('facebook.com', 'fb.watch'), 'Facebook'),
+        (('x.com', 'twitter.com', 'twimg.com'), 'X'), (('tiktok.com',), 'TikTok'), (('reddit.com', 'redd.it'), 'Reddit'),
+        (('pin.it',), 'Pinterest'), (('snapchat.com',), 'Snapchat'), (('youtube.com', 'youtu.be'), 'YouTube'),
+        (('tumblr.com',), 'Tumblr'), (('bsky.app',), 'Bluesky'), (('twitch.tv',), 'Twitch'), (('linkedin.com',), 'LinkedIn')]
+
+
+def app_of(url):
+    host = (urllib.parse.urlparse(url).hostname or '').lower()
+    if 'pinterest' in host.split('.'):
+        return 'Pinterest'
+    return next((app for hosts, app in APPS if any(host == h or host.endswith('.' + h) for h in hosts)), '')
+
+
+def label(who, url, rest):
+    """"@who · App · rest": who posted a save and where come first, so saves sort and read by person."""
+    app = app_of(url)
+    who = f"@{who.lstrip('@')}" if app and who else ''
+    return clean_name(' · '.join(p for p in (who, app, rest) if p))
+
+
+def uploader(info):
+    """The poster's handle yt-dlp found: a handle-like uploader_id, channel or uploader first, a display
+    name after, never a numeric account id."""
+    names = [str(info.get(k) or '').strip().lstrip('@') for k in ('uploader_id', 'channel', 'uploader')]
+    names = [n for n in names if n and not n.isdigit()]
+    return next((n for n in names if ' ' not in n), names[0] if names else '')
+
+
 def unique(folder, stem, ext):
     path, n = os.path.join(folder, f'{stem}.{ext}'), 2
     while os.path.exists(path):
@@ -336,7 +365,7 @@ def meta_items(page, code):
             break
     if post is None:
         return None
-    return named(media_items(post.get('carousel_media') or [post]), f"{(post.get('user') or {}).get('username') or ''} {code}")
+    return named(media_items(post.get('carousel_media') or [post]), code, (post.get('user') or {}).get('username') or '')
 
 
 def media_items(media):
@@ -411,7 +440,7 @@ def story_items(user, highlight=None, only=None):
         # lasts a day.
         raise Failure('login' if highlight else 'gone')
     owner = (found.get('user') or {}).get('username') or user or 'instagram'
-    return named(media_items(media), f'{owner} {only or highlight or "story"}')
+    return named(media_items(media), only or highlight or 'story', owner)
 
 
 def shared_story(url):
@@ -446,7 +475,7 @@ def snap_items(url):
             'thumb': ((s['snapUrls'].get('mediaPreviewUrl') or {}).get('value'))}
            for s in story.get('snapList') or [] if (s.get('snapUrls') or {}).get('mediaUrl')]
     user = ((props.get('userProfile') or {}).get('publicProfileInfo') or {}).get('username') or 'snapchat'
-    return named(out, f'{user} story') or None
+    return named(out, 'story', user) or None
 
 
 def tiktok_photos(url):
@@ -460,7 +489,7 @@ def tiktok_photos(url):
         urls = (im.get('imageURL') or {}).get('urlList') or []
         if urls:
             out.append({'kind': 'image', 'src': urls[0], 'alts': urls[1:], 'thumb': urls[0]})
-    return named(out, f"{(item.get('author') or {}).get('uniqueId') or 'tiktok'} {item.get('id') or ''}") or None
+    return named(out, str(item.get('id') or ''), (item.get('author') or {}).get('uniqueId') or '') or None
 
 
 def fb_story_items(url, card=None):
@@ -512,7 +541,7 @@ def fb_story_items(url, card=None):
     picked = [m for cid, m in cards if not card or cid == card] or [m for _, m in cards]
     found = list({m['src']: m for m in picked}.values())
     owner = re.search(r'"story_bucket_owner":\{[^{}]*"name":"([^"]+)"', page)
-    return named(found, f"{owner.group(1) if owner else 'facebook'} story") or None
+    return named(found, 'story', owner.group(1) if owner else '') or None
 
 
 def profile(site, user, part='all', cursor=None, cookies=None, ua=None):
@@ -631,7 +660,7 @@ def x_items(tid):
             mp4 = [v for v in (m.get('video_info') or {}).get('variants') or [] if v.get('content_type') == 'video/mp4']
             if mp4:
                 out.append({'kind': 'video', 'src': max(mp4, key=lambda v: v.get('bitrate') or 0)['url'], 'thumb': still})
-    return named(out, f"{(data.get('user') or {}).get('screen_name') or ''} {tid}") or None
+    return named(out, tid, (data.get('user') or {}).get('screen_name') or '') or None
 
 
 def reddit_items(sub, post, hops=0):
@@ -685,10 +714,11 @@ def raise_(e):
     raise e
 
 
-def named(items, stem):
+def named(items, stem, who=''):
     stem = clean_name(stem.strip())
     for i, it in enumerate(items):
         it['name'] = stem if len(items) == 1 else f'{stem} ({i + 1})'
+        it['who'] = who
     return items
 
 
@@ -776,7 +806,7 @@ def extract(yt_dlp, url, base):
     return info
 
 
-def download(yt_dlp, info, base, out_dir, progress, fmt, lo, span):
+def download(yt_dlp, info, base, out_dir, progress, fmt, lo, span, name=None):
     """Downloads one video yt-dlp read: {"files": [...]}, with "join" when the files are a video and
     an audio track for MediaMuxer to join."""
     def one(chosen, template, start, width):
@@ -800,14 +830,16 @@ def download(yt_dlp, info, base, out_dir, progress, fmt, lo, span):
             raise Failure('nothing')
         return settle(files[0])
 
-    stem = f"{clean_name(info.get('title') or '')} [{clean_name(str(info.get('id') or ''))}]"
+    stem = name or f"{clean_name(info.get('title') or '')} [{clean_name(str(info.get('id') or ''))}]"
     choice = None if fmt else pick(info)
     if choice and choice[1]:
         tag = clean_name(str(info.get('id') or 'x'))
         parts = [one(choice[0], f'part-{tag}-v.%(ext)s', lo, span * 0.85),
                  one(choice[1], f'part-{tag}-a.%(ext)s', lo + span * 0.85, span * 0.12)]
         return {'files': parts, 'join': f'{stem}.mp4'}
-    return {'files': [one(fmt or (choice[0] if choice else None), '%(title).70B [%(id)s].%(ext)s', lo, span)]}
+    # yt-dlp reads % in an output template as a field.
+    template = f"{stem.replace('%', '%%')}.%(ext)s" if name else '%(title).70B [%(id)s].%(ext)s'
+    return {'files': [one(fmt or (choice[0] if choice else None), template, lo, span)]}
 
 
 def thumbnail(item, referer, folder, i):
@@ -850,7 +882,7 @@ def items_of(yt_dlp, url, base):
             page, _ = page_of(url)
             items = meta_items(page, m.group(1))
             if items == [] and 'threads.' in url:
-                items = named(threads_gifs(m.group(0)), f'{m.group(0).split("@")[-1].split("/")[0]} {m.group(1)}')
+                items = named(threads_gifs(m.group(0)), m.group(1), m.group(0).split("@")[-1].split("/")[0])
         except Failure:
             items = None
         if items == []:
@@ -876,7 +908,7 @@ def items_of(yt_dlp, url, base):
         file = lambda e: e.get('extractor_key') == 'Generic' and not e.get('formats') and e.get('protocol') in ('http', 'https') and e.get('url')
         items = named([{'kind': 'video', 'src': e['url'], 'thumb': e.get('thumbnail')} if file(e) else
                        {'kind': 'video', 'info': e, 'thumb': e.get('thumbnail')} for e in entries if e],
-                      f"{info.get('title') or ''} [{info.get('id') or ''}]")
+                      f"{info.get('title') or ''} [{info.get('id') or ''}]", uploader(info))
         if not items:
             raise Failure('nothing')
         return items
@@ -938,7 +970,7 @@ def save_signed(url, out_dir, ytdlp_zip, progress, fmt, qjs, pick_items, thumbs,
             url, items = seen[1], seen[2]
         else:
             url = resolve(asked)
-            items = items_of(yt_dlp, url, base)
+            items = [dict(it, name=label(it.get('who', ''), url, it['name'])) for it in items_of(yt_dlp, url, base)]
             RECENT[asked] = (time.time(), url, items)
         if pick_items is None and len(items) > 1:
             folder = thumbs or out_dir
@@ -955,7 +987,7 @@ def save_signed(url, out_dir, ytdlp_zip, progress, fmt, qjs, pick_items, thumbs,
             lo, span = 100 * n / len(chosen), 100 / len(chosen)
             try:
                 if 'info' in items[i]:
-                    saves.append({'index': i, **download(yt_dlp, items[i]['info'], base, out_dir, progress, fmt, lo, span)})
+                    saves.append({'index': i, **download(yt_dlp, items[i]['info'], base, out_dir, progress, fmt, lo, span, items[i]['name'])})
                 else:
                     saves.append({'index': i, 'files': [fetch(items[i], url, out_dir, progress, lo, span)]})
             except Failure as f:
@@ -1032,7 +1064,14 @@ if __name__ == '__main__':
          'video_versions': [{'url': 'https://x.test/v.mp4', 'width': 720, 'height': 1280}]}]}
     page = f'<script type="application/json" data-sjs>{json.dumps({"a": [{"code": "ABC"}, carousel]})}</script>'
     assert [(i['kind'], i['src'], i['name']) for i in meta_items(page, 'ABC')] == [
-        ('image', 'https://x.test/b.jpg', 'nasa ABC (1)'), ('video', 'https://x.test/v.mp4', 'nasa ABC (2)')]
+        ('image', 'https://x.test/b.jpg', 'ABC (1)'), ('video', 'https://x.test/v.mp4', 'ABC (2)')]
+    assert meta_items(page, 'ABC')[0]['who'] == 'nasa'
+    assert label('nasa', 'https://www.threads.com/@nasa/post/ABC', 'ABC') == '@nasa · Threads · ABC'
+    assert label('', 'https://v.redd.it/x/DASHPlaylist.mpd', 'reddit [x]') == 'Reddit · reddit [x]'
+    assert label('bob', 'https://www.pinterest.ph/pin/1/', 'a') == '@bob · Pinterest · a'
+    assert label('bob', 'https://example.com/a', 'a') == 'a'
+    assert uploader({'uploader_id': '6800', 'channel': 'Khaby Lame', 'uploader': 'khaby.lame'}) == 'khaby.lame'
+    assert uploader({'uploader': 'Jane Doe'}) == 'Jane Doe'
     assert meta_items(page, 'XYZ') is None
     assert META_POST.match('https://www.threads.com/@nasa/post/Decc755lYhC?xmt=AQF0').group(1) == 'Decc755lYhC'
     assert META_POST.match('https://www.instagram.com/reel/C1a2b3/?igsh=x').group(1) == 'C1a2b3'

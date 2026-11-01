@@ -61,6 +61,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed as pinsIndexe
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -282,11 +283,13 @@ fun rememberVeil(): (Saved) -> Boolean {
     val changes = Library.changes
     return remember(mode, changes) {
         val prefs = Prefs(ctx)
-        when (mode) {
+        val folders = prefs.blurredFolders
+        val byFile: (Saved) -> Boolean = when (mode) {
             "all" -> prefs.unblurred.let { clear -> { item: Saved -> "${item.id}" !in clear } }
             "pick" -> prefs.blurred.let { blurred -> { item: Saved -> "${item.id}" in blurred } }
             else -> { _: Saved -> false }
         }
+        { item: Saved -> item.path in folders || (item.album.isNotEmpty() && item.album in folders) || byFile(item) }
     }
 }
 
@@ -321,25 +324,44 @@ fun Library(
     var asking by remember { mutableStateOf<Ask?>(null) }
     var moving by remember { mutableStateOf<List<Saved>?>(null) }
     var menu by remember { mutableStateOf<Long?>(null) } // the tile a hold opened the menu of
+    var folderMenu by remember { mutableStateOf<String?>(null) } // the folder chip a hold opened the menu of
+    var locking by remember { mutableStateOf<List<Saved>?>(null) }
+    var tagging by remember { mutableStateOf<List<Saved>?>(null) }
+    var more by remember { mutableStateOf(false) }
+    var unlocking by remember { mutableStateOf<Locks.Entry?>(null) }
+    var viewing by remember { mutableStateOf<Locks.Entry?>(null) }
+    var lockedMenu by remember { mutableStateOf<Locks.Entry?>(null) }
+    var newPass by remember { mutableStateOf<List<Locks.Entry>?>(null) }
+    val lockChanges = Locks.changes
+    val entries = remember(lockChanges) { Locks.list(ctx) }
     val pins = LocalPins.current
     val veiled = rememberVeil()
     val blurring = LocalBlur.current != "off"
     val snack = remember { SnackbarHostState() }
     val trash = filter == "trash"
     val changes = Library.changes
-    val albums = remember(media, changes) { if (gallery) Library.folders(ctx, media) else Library.albums(ctx, media) }
+    // Pinned folders come first, in their own order.
+    val prefsNow = remember(changes) { Prefs(ctx) }
+    val albums = remember(media, changes) { (if (gallery) Library.folders(ctx, media) else Library.albums(ctx, media)).sortedByDescending { prefsNow.isPinned(it) } }
+    val tagsOf = remember(changes) { prefsNow.tags }
+    // Saved from: the apps LodiSave's own saves came from, named in their files ("@who · App · title").
+    val apps = remember(media) { media.mapNotNull { sourceOf(it.name) }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
+    val tagNames = remember(tagsOf) { tagsOf.values.flatten().distinct().sorted() }
     val hidden = remember(changes) { Prefs(ctx).hiddenFromHome }
-    val list = remember(media, bin, filter, sort, query, album) {
+    val list = remember(media, bin, filter, sort, query, album, tagsOf) {
         (if (trash) bin else media)
             .filter { trash || album == null || (if (gallery) it.path else it.album) == album }
             .filter {
-                when (filter) {
-                    "fav" -> it.favorite
-                    "all", "trash" -> true
+                when {
+                    filter == "fav" -> it.favorite
+                    filter == "all" || filter == "trash" -> true
+                    filter == "locked" -> false
+                    filter.startsWith("from:") -> sourceOf(it.name) == filter.drop(5)
+                    filter.startsWith("tag:") -> filter.drop(4) in tagsOf["${it.id}"].orEmpty()
                     else -> it.kind == filter
                 }
             }
-            .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
+            .filter { q -> query.isBlank() || q.name.contains(query.trim(), ignoreCase = true) || tagsOf["${q.id}"].orEmpty().any { it.contains(query.trim(), ignoreCase = true) } }
             .let { l ->
                 when (sort) {
                     "old" -> l.sortedBy { it.added }
@@ -401,7 +423,7 @@ fun Library(
                     } else Column(Modifier.weight(1f).padding(start = 4.dp)) {
                         Text(if (trash) copy.trash else album?.let(label) ?: if (gallery) copy.gallery else copy.library,
                             fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = t.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(copy.files(list.size), fontFamily = GeistMono, fontSize = 12.sp, color = t.muted)
+                        Text(copy.files(if (filter == "locked") entries.size else list.size), fontFamily = GeistMono, fontSize = 12.sp, color = t.muted)
                     }
                     RoundButton(if (searching) Glyph.Close else Glyph.Search, copy.search, { searching = !searching; if (!searching) query = "" })
                     Box {
@@ -422,17 +444,30 @@ fun Library(
             top()
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // The Gallery shows photos and videos, so it has no audio.
-                items(if (gallery) FILTERS - "audio" else FILTERS) { key ->
-                    val label = when (key) {
-                        "photo" -> copy.photos
-                        "video" -> copy.videos
-                        "gif" -> copy.gifs
-                        "audio" -> copy.audio
-                        "fav" -> copy.favorites
-                        "trash" -> copy.trash
+                val keys = (if (gallery) FILTERS - "audio" else FILTERS) + (if (entries.isNotEmpty() || filter == "locked") listOf("locked") else emptyList()) +
+                    apps.map { "from:$it" } + tagNames.map { "tag:$it" }
+                items(keys) { key ->
+                    val label = when {
+                        key == "photo" -> copy.photos
+                        key == "video" -> copy.videos
+                        key == "gif" -> copy.gifs
+                        key == "audio" -> copy.audio
+                        key == "fav" -> copy.favorites
+                        key == "trash" -> copy.trash
+                        key == "locked" -> copy.locked
+                        key.startsWith("from:") -> key.drop(5)
+                        key.startsWith("tag:") -> "#${key.drop(4)}"
                         else -> copy.all
                     }
-                    Chip(label, filter == key, { filter = key; picked = emptyList() }, glyph = if (key == "fav") Glyph.Heart else if (key == "trash") Glyph.Trash else null)
+                    val glyph = when {
+                        key == "fav" -> Glyph.Heart
+                        key == "trash" -> Glyph.Trash
+                        key == "locked" -> Glyph.Lock
+                        key.startsWith("from:") -> Glyph.Link
+                        key.startsWith("tag:") -> Glyph.Tag
+                        else -> null
+                    }
+                    Chip(label, filter == key, { filter = key; picked = emptyList() }, glyph = glyph)
                 }
             }
             Spacer(Modifier.size(8.dp))
@@ -445,7 +480,34 @@ fun Library(
                     }.padding(horizontal = 10.dp, vertical = 8.dp))
             } else {
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(albums, key = { it }) { name -> Chip(label(name), album == name, { album = if (album == name) null else name; picked = emptyList() }, Modifier.animateItem(), Glyph.Folder) }
+                    items(albums, key = { it }) { name ->
+                        // A hold pins, blurs or locks the whole folder.
+                        Box(Modifier.animateItem()) {
+                            Chip(label(name), album == name, { album = if (album == name) null else name; picked = emptyList() }, glyph = if (prefsNow.isPinned(name)) Glyph.Pin else Glyph.Folder,
+                                onLongClick = { folderMenu = name })
+                            DropdownMenu(folderMenu == name, { folderMenu = null }, containerColor = t.surface) {
+                                val pinnedNow = prefsNow.isPinned(name)
+                                DropdownMenuItem({ Text(if (pinnedNow) copy.unpin else copy.pin, fontFamily = Geist, color = t.ink) }, {
+                                    folderMenu = null
+                                    val prefs = Prefs(ctx)
+                                    if (prefs.pinMode == "all") prefs.unpinned = if (pinnedNow) prefs.unpinned + name else prefs.unpinned - name
+                                    else prefs.pinned = if (pinnedNow) prefs.pinned - name else prefs.pinned + name
+                                    Library.changed()
+                                }, leadingIcon = { GlyphIcon(Glyph.Pin, size = 18.dp) })
+                                val blurredNow = name in prefsNow.blurredFolders
+                                DropdownMenuItem({ Text(if (blurredNow) copy.unblurFolder else copy.blurFolder, fontFamily = Geist, color = t.ink) }, {
+                                    folderMenu = null
+                                    val prefs = Prefs(ctx)
+                                    prefs.blurredFolders = if (blurredNow) prefs.blurredFolders - name else prefs.blurredFolders + name
+                                    Library.changed()
+                                }, leadingIcon = { GlyphIcon(if (blurredNow) Glyph.Eye else Glyph.EyeOff, size = 18.dp) })
+                                DropdownMenuItem({ Text(copy.lockFolder, fontFamily = Geist, color = t.ink) }, {
+                                    folderMenu = null
+                                    locking = media.filter { (if (gallery) it.path else it.album) == name }
+                                }, leadingIcon = { GlyphIcon(Glyph.Lock, size = 18.dp) })
+                            }
+                        }
+                    }
                     item(key = "+") { Chip(copy.newAlbum, false, { naming = "" }, Modifier.animateItem(), Glyph.Plus) }
                 }
                 // The phone's folders belong to the apps that made them, so the Gallery doesn't rename or remove them.
@@ -476,7 +538,12 @@ fun Library(
                 )
                 // With blur on, a hold that lets go in place opens the tile's menu; sliding still picks.
                 val hold = if (blurring) { item: Saved -> menu = item.id } else null
-                if (list.isEmpty()) Empty(copy, filter, album, query, gallery)
+                if (filter == "locked") Column {
+                    if (Locks.unlocked()) Text(copy.lockAgain, color = t.accent, fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp).clip(CircleShape).clickable { Locks.lockAgain(ctx); done(copy.lockedAgain) }.padding(horizontal = 10.dp, vertical = 8.dp))
+                    LockedGrid(copy, entries, bottom, { e -> if (Locks.openedOf(e) != null) viewing = e else unlocking = e }, { lockedMenu = it })
+                }
+                else if (list.isEmpty()) Empty(copy, filter, album, query, gallery)
                 // Pinterest's phone layout: two columns of tiles in their own shapes, close to the screen's edges.
                 else if (pins) LazyVerticalStaggeredGrid(
                     StaggeredGridCells.Fixed(2),
@@ -554,6 +621,14 @@ fun Library(
                         picked = emptyList()
                         trashWithUndo(scope, ctx, copy, these, ::done)
                     }
+                    // Tag and Lock, behind More so the bar keeps its labels on a phone.
+                    Box(Modifier.weight(1f)) {
+                        Row { Act(Glyph.More, copy.more) { more = true } }
+                        DropdownMenu(more, { more = false }, containerColor = t.surface) {
+                            DropdownMenuItem({ Text(copy.tag, fontFamily = Geist, color = t.ink) }, { more = false; tagging = chosen }, leadingIcon = { GlyphIcon(Glyph.Tag, size = 18.dp) })
+                            DropdownMenuItem({ Text(copy.lock, fontFamily = Geist, color = t.ink) }, { more = false; locking = chosen }, leadingIcon = { GlyphIcon(Glyph.Lock, size = 18.dp) })
+                        }
+                    }
                 }
             }
         }
@@ -574,6 +649,31 @@ fun Library(
         }
     }
     asking?.let { ask -> Confirm(copy, ask.question, { asking = null }) { asking = null; ask.yes() } }
+    locking?.let { these ->
+        LockDialog(copy, these, { locking = null }) { message -> locking = null; picked = emptyList(); done(message) }
+    }
+    tagging?.let { these -> TagDialog(copy, these, { tagging = null }) { message -> tagging = null; picked = emptyList(); done(message) } }
+    unlocking?.let { e ->
+        UnlockDialog(copy, e, { unlocking = null }) { message -> unlocking = null; viewing = e; message?.let { done(it) } }
+    }
+    viewing?.let { e -> LockedViewer(copy, e) { viewing = null } }
+    newPass?.let { these -> NewPasswordDialog(copy, these, { newPass = null }) { message -> newPass = null; done(message) } }
+    lockedMenu?.let { e ->
+        LockedMenu(copy, e, { lockedMenu = null }) { what ->
+            lockedMenu = null
+            val open = Locks.openedOf(e) != null
+            when (what) {
+                "open" -> if (open) viewing = e else unlocking = e
+                "new" -> if (open) newPass = listOf(e) else unlocking = e
+                "again" -> { Locks.lockAgain(ctx); done(copy.lockedAgain) }
+                "delete" -> asking = Ask(copy.deleteForGoodLocked) { Locks.delete(ctx, e) }
+                "remove" -> if (!open) unlocking = e else scope.launch {
+                    val ok = withContext(Dispatchers.IO) { Locks.removePassword(ctx, e) }
+                    done(if (ok) copy.backInGallery(1) else copy.notDone(1))
+                }
+            }
+        }
+    }
     moving?.let { these ->
         AlbumSheet(copy, albums, { moving = null }, label, none = !gallery) { to ->
             moving = null
@@ -584,6 +684,40 @@ fun Library(
             }
         }
     }
+}
+
+/** The app a LodiSave save came from, named in its file as "@who · App · title", or null. */
+fun sourceOf(name: String): String? = Regex("""^@[^·]+? · ([^·]+?) · """).find(name)?.groupValues?.get(1)
+
+/** Tags for the picked files: theirs to take off, and new ones to add, comma between. */
+@Composable
+fun TagDialog(copy: Copy, items: List<Saved>, onDismiss: () -> Unit, onDone: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val t = LocalTokens.current
+    val prefs = remember { Prefs(ctx) }
+    var all by remember { mutableStateOf(prefs.tags) }
+    var text by remember { mutableStateOf("") }
+    val ids = items.map { "${it.id}" }
+    val have = ids.flatMap { all[it].orEmpty() }.distinct().sorted()
+    fun save(map: Map<String, List<String>>) { all = map; prefs.tags = map; Library.changed() }
+    AlertDialog(
+        onDismiss,
+        confirmButton = { Pill(copy.done, {
+            val add = text.split(',').map { it.trim().take(40) }.filter { it.isNotEmpty() }
+            if (add.isNotEmpty()) save(all + ids.associateWith { id -> (all[id].orEmpty() + add).distinctBy { it.lowercase() }.sortedBy { it.lowercase() } })
+            onDone(copy.tagged(items.size))
+        }) },
+        title = { Text(copy.tags, fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = t.ink) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (have.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (tag in have) Chip("#$tag", false, { save(all + ids.associateWith { id -> all[id].orEmpty() - tag }) }, glyph = Glyph.Close)
+                }
+                Field(text, { text = it }, copy.tagHint, focus = true)
+            }
+        },
+        containerColor = t.surface, shape = RoundedCornerShape(28.dp),
+    )
 }
 
 /** Moves files to the trash and offers Undo, which brings them back. */

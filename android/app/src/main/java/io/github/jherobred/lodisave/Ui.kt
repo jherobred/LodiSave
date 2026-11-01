@@ -56,6 +56,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -232,7 +233,9 @@ enum class Glyph(d: String, val fill: Boolean = false) {
     Saves("M12 4V14M7.5 9.5L12 14L16.5 9.5M5 17.5V19C5 19.6 5.4 20 6 20H18C18.6 20 19 19.6 19 19V17.5"),
     Photos("M5 4.5H19C19.8 4.5 20.5 5.2 20.5 6V18C20.5 18.8 19.8 19.5 19 19.5H5C4.2 19.5 3.5 18.8 3.5 18V6C3.5 5.2 4.2 4.5 5 4.5ZM3.5 15.5L8.5 10.5L13 15L15.5 12.5L20.5 17.5M16.5 8.5A1 1 0 1 1 16.5 8.49"),
     Cloud("M7 18.5H17.5A4 4 0 0 0 18 10.5A6 6 0 0 0 6.5 9.5A4.5 4.5 0 0 0 7 18.5ZM12 11V16M9.5 13.5L12 11L14.5 13.5"),
-    Person("M16 8A4 4 0 1 1 8 8A4 4 0 1 1 16 8ZM4.5 20C5.4 16.6 8.4 14.5 12 14.5C15.6 14.5 18.6 16.6 19.5 20");
+    Person("M16 8A4 4 0 1 1 8 8A4 4 0 1 1 16 8ZM4.5 20C5.4 16.6 8.4 14.5 12 14.5C15.6 14.5 18.6 16.6 19.5 20"),
+    Pin("M9 4H15L14 9L17.5 12.5V14H6.5V12.5L10 9ZM12 14V20"),
+    Tag("M3.5 12.2V5A1.5 1.5 0 0 1 5 3.5H12.2L20.5 11.8A1.5 1.5 0 0 1 20.5 13.9L13.9 20.5A1.5 1.5 0 0 1 11.8 20.5ZM9.7 8.3A1.4 1.4 0 1 1 6.9 8.3A1.4 1.4 0 1 1 9.7 8.3Z");
 
     val path = PathParser().parsePathString(d).toPath()
 }
@@ -265,7 +268,7 @@ fun RoundButton(
 
 /** A filter or album choice: a pill that fills with the accent when it's on. */
 @Composable
-fun Chip(text: String, on: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, glyph: Glyph? = null) {
+fun Chip(text: String, on: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, glyph: Glyph? = null, onLongClick: (() -> Unit)? = null) {
     val t = LocalTokens.current
     val press = remember { MutableInteractionSource() }
     val scale = pressScale(press)
@@ -273,7 +276,7 @@ fun Chip(text: String, on: Boolean, onClick: () -> Unit, modifier: Modifier = Mo
     val ink by animateColorAsState(if (on) t.accentInk else t.ink, snap(), label = "chipInk")
     Row(
         modifier.graphicsLayer { scaleX = scale; scaleY = scale }.clip(CircleShape).background(fill)
-            .clickable(press, null, role = Role.Tab, onClick = onClick).heightIn(min = 38.dp).padding(horizontal = 14.dp),
+            .combinedClickable(press, null, role = Role.Tab, onLongClick = onLongClick, onClick = onClick).heightIn(min = 38.dp).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         glyph?.let { GlyphIcon(it, tint = ink, size = 16.dp) }

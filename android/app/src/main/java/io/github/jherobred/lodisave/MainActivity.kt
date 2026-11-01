@@ -218,6 +218,7 @@ private fun App(clip: String?, focus: Int, free: Boolean, onFreeDone: () -> Unit
     var settings by remember { mutableStateOf(false) }
     var accounts by remember { mutableStateOf(false) }
     var drive by remember { mutableStateOf(false) }
+    var recovering by remember { mutableStateOf(false) }
     var sounds by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf(false) }
 
@@ -314,11 +315,12 @@ private fun App(clip: String?, focus: Int, free: Boolean, onFreeDone: () -> Unit
             copy, focus, lang, { lang = it; prefs.lang = it; SaveWidget.refresh(ctx) }, moving, { moving = it; prefs.motion = it },
             hideRecent, { hideRecent = it; prefs.hideRecent = it }, loops, { loops = it; prefs.loops = it },
             layout, { layout = it; prefs.layout = it }, blur, { blur = it; prefs.blur = it },
-            onAccounts = { settings = false; accounts = true }, onDrive = { settings = false; drive = true },
+            onAccounts = { settings = false; accounts = true }, onDrive = { settings = false; drive = true }, onRecovery = { settings = false; recovering = true },
             onIntro = { settings = false; go(Screen.Intro) }, onDismiss = { settings = false },
         )
         if (accounts) AccountsSheet(copy) { accounts = false }
         if (drive) DriveSheet(copy) { drive = false }
+        if (recovering) RecoverySheet(copy) { recovering = false }
         if (sounds) SoundPicker(copy, remember(all) { all.values.filter { !it.trashed && (it.kind == "video" || it.kind == "audio") }.sortedByDescending { it.added } }) { sounds = false }
         if (free) FreeUp(copy, gallery + media, onFreeDone)
     }
@@ -541,7 +543,7 @@ private fun SettingsSheet(
     copy: Copy, focus: Int, lang: String, onLang: (String) -> Unit, motion: Boolean, onMotion: (Boolean) -> Unit,
     hideRecent: Boolean, onHideRecent: (Boolean) -> Unit, loops: Boolean, onLoops: (Boolean) -> Unit,
     layout: String, onLayout: (String) -> Unit, blur: String, onBlur: (String) -> Unit,
-    onAccounts: () -> Unit, onDrive: () -> Unit, onIntro: () -> Unit, onDismiss: () -> Unit,
+    onAccounts: () -> Unit, onDrive: () -> Unit, onRecovery: () -> Unit, onIntro: () -> Unit, onDismiss: () -> Unit,
 ) {
     val ctx = LocalContext.current
     val t = LocalTokens.current
@@ -559,6 +561,11 @@ private fun SettingsSheet(
             SettingRow(copy.layout) { Segmented(listOf("grid" to copy.layoutGrid, "pins" to copy.layoutPins), layout, onLayout) }
             SettingRow(copy.blur) { Segmented(listOf("off" to copy.off, "all" to copy.blurAll, "pick" to copy.blurPicked), blur, onBlur) }
             Text(copy.blurHint, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
+            var pinMode by remember { mutableStateOf(prefs.pinMode) }
+            SettingRow(copy.pinnedFolders) { Segmented(listOf("all" to copy.pinAll, "pick" to copy.pinPicked), pinMode) { pinMode = it; prefs.pinMode = it; Library.changed() } }
+            Text(copy.pinHint, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
+            SettingRow(copy.recovery) { Pill(copy.open, onRecovery, primary = false) }
+            Text(if (Recovery.isSet(ctx)) copy.recoveryOn else copy.recoveryOff, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
             SettingRow(copy.drive) { Pill(copy.open, onDrive, primary = false) }
             Text(copy.driveHint, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
             SettingRow(copy.bubble) {

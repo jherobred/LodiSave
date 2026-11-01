@@ -488,7 +488,7 @@ function act(what, ps = picked()) {
     move: () => folderSheet(ps, false),
     copyto: () => folderSheet(ps, true),
     rename: () => (one ? renameSheet(one) : batchSheet(ps)),
-    drive: () => backup(ps),
+    drive: () => (driveReady ? backup(ps) : driveLater()),
     clip: () => clip(ps),
     trash: () => trash(ps),
     all: () => { for (const r of ui.shown) ui.sel.add(r.path); paintSel() },
@@ -512,7 +512,7 @@ function menu(x, y, entries) {
   const m = $('menu');
   m.replaceChildren(...entries.filter(Boolean).map((e) => {
     if (e === '-') return el('hr');
-    const b = el('button', e.bad ? 'bad' : '', { type: 'button' });
+    const b = el('button', `${e.bad ? 'bad' : ''}${e.ghost ? ' ghost' : ''}`, { type: 'button' });
     b.append(icon(e.icon), e.label);
     if (e.key) b.append(el('kbd', '', { textContent: e.key }));
     b.onclick = () => { m.hidden = true; e.run() };
@@ -550,7 +550,7 @@ function tileMenu(r, x, y) {
     { icon: 'copy', label: 'Copy', key: 'Ctrl+C', run: () => act('clip', ps) },
     { icon: 'copy', label: 'Copy path', run: () => act('path', ps) },
     one && still && { icon: 'image', label: 'Set as desktop background', run: () => act('wallpaper', ps) },
-    { icon: 'cloud', label: 'Back up to Google Drive', run: () => act('drive', ps) },
+    { icon: 'cloud', label: driveReady ? 'Back up to Google Drive' : 'Google Drive: later version', ghost: !driveReady, run: () => act('drive', ps) },
     '-',
     { icon: 'trash', label: 'Delete', key: 'Del', bad: true, run: () => act('trash', ps) },
   ]);
@@ -780,7 +780,20 @@ async function settingsSheet() {
   );
 }
 
+// A build without Google's sign-in client for Drive shows Drive faded, as coming in a later version.
+let driveReady = true;
+invoke('drive_status').then((s) => {
+  driveReady = s.ready;
+  $('open-drive').classList.toggle('ghost', !driveReady);
+  $('open-drive').querySelector('.later').hidden = driveReady;
+  for (const b of document.querySelectorAll('[data-act="drive"]')) b.classList.toggle('ghost', !driveReady);
+  peekFor = null;
+  paintPeek();
+}).catch(() => {});
+const driveLater = () => toast('Google Drive backup on PC comes in a later version. It works in LodiSave for Android now.');
+
 async function driveSheet() {
+  if (!driveReady) return driveLater();
   let s;
   try { s = await invoke('drive_status') } catch (e) { return oops(e) }
   const rules = { ...s.rules };
@@ -1365,10 +1378,11 @@ function manyPeek(body, rs) {
     .map(([word, k]) => [word, count(k)]).filter(([, n]) => n).map(([word, n]) => `${n} ${word}${n === 1 ? '' : 's'}`).join(', ');
   const ps = rs.map((r) => r.path);
   const main = el('div', 'mainacts');
-  main.append(pill('Back up to Google Drive', 'primary', () => act('drive', ps)), pill('Move to', '', () => act('move', ps)), pill('Tags', '', () => act('tag', ps)));
+  if (driveReady) main.append(pill('Back up to Google Drive', 'primary', () => act('drive', ps)), pill('Move to', '', () => act('move', ps)), pill('Tags', '', () => act('tag', ps)));
+  else main.append(pill('Move to', 'primary', () => act('move', ps)), pill('Tags', '', () => act('tag', ps)), pill('Copy', '', () => act('clip', ps)));
   body.append(
     stack, el('p', 'pname', { textContent: `${rs.length} files` }), el('p', 'psub', { textContent: `${mix}, ${size(rs.reduce((n, r) => n + r.bytes, 0))} in all` }),
-    main, acts(ps, [['edit', 'Rename all', 'rename']], ['drive', 'move', 'tag']),
+    main, acts(ps, [['edit', 'Rename all', 'rename']], driveReady ? ['drive', 'move', 'tag'] : ['move', 'tag', 'clip']),
   );
 }
 
@@ -1387,7 +1401,7 @@ function nonePeek(body) {
     todo.append(row);
   };
   const waiting = rs.length - backed - locked;
-  if (waiting > 0) item2(`${waiting} not on Google Drive`, backed ? `${backed} already are.` : 'Nothing here is backed up yet.', 'Back up', driveSheet);
+  if (driveReady && waiting > 0) item2(`${waiting} not on Google Drive`, backed ? `${backed} already are.` : 'Nothing here is backed up yet.', 'Back up', driveSheet);
   if (locked && !unlocked()) item2(`${locked} locked ${locked === 1 ? 'file' : 'files'}`, 'Encrypted with a password.', 'Unlock', () => act('unlock', rs.filter((r) => r.kind === 'locked').map((r) => r.path)));
   if (rs.length > 1) item2('Duplicate copies', 'Find files saved more than once.', 'Check', () => go({ view: 'dups', dups: null }));
   const keys = el('details', 'keys');
@@ -1431,7 +1445,8 @@ function acts(ps, extra, skip = []) {
   for (const [name, label, what] of extra) row(name, label, what);
   row('copy', 'Copy path', 'path');
   row('eye-off', blurred ? 'Unblur' : 'Blur', 'blur', 'B');
-  row('cloud', 'Back up to Google Drive', 'drive');
+  if (driveReady) row('cloud', 'Back up to Google Drive', 'drive');
+  else row('cloud', 'Google Drive', 'drive', 'Later version', 'ghost');
   if (anyPlain) row('lock', 'Lock with a password', 'lock', 'L');
   else {
     row('lock', 'Set a new password', 'newpass');
@@ -1452,7 +1467,7 @@ function paintRail(ps) {
   };
   $('peek-rail').replaceChildren(
     b('image', 'View (Enter)', 'view'), b('heart', 'Favorite (F)', 'fav'), b('tag', 'Tags (T)', 'tag'), b('move', 'Move to (M)', 'move'),
-    b('copy', 'Copy (Ctrl+C)', 'clip'), b('cloud', 'Back up', 'drive'), el('hr'), b('trash', 'Delete (Del)', 'trash', 'bad'),
+    b('copy', 'Copy (Ctrl+C)', 'clip'), b('cloud', driveReady ? 'Back up' : 'Google Drive: later version', 'drive', driveReady ? '' : 'ghost'), el('hr'), b('trash', 'Delete (Del)', 'trash', 'bad'),
   );
 }
 
