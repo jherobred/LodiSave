@@ -82,10 +82,11 @@ button:disabled { cursor: not-allowed; color: var(--muted); background-color: va
 
 /* Sidebar: on the page's own surface, the current view a neutral step darker, never the accent. */
 .side { display: flex; flex-direction: column; gap: 2px; padding: 0 10px 12px; border-right: 1px solid var(--line); background: var(--surface); overflow: hidden auto; min-height: 0; min-width: 0 }
-.side-top { display: flex; align-items: center; gap: 4px; height: var(--top); padding: var(--strip) 0 0 8px; flex: none }
-.brand { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; overflow: hidden }
-.brand img { width: 28px; height: 28px; flex: none }
-.brand span { font-size: 16px; font-weight: 600; letter-spacing: -.01em }
+.side-top { display: flex; align-items: center; gap: 4px; height: var(--strip); padding: 0 0 0 4px; margin-bottom: 10px; flex: none }
+.brand { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; overflow: hidden }
+.brand img { width: 20px; height: 20px; flex: none }
+.brand span { font-size: 13px; font-weight: 600 }
+.side-top .icon { width: 30px; height: 30px }
 .brand em { font-style: normal; font-weight: 400; color: var(--muted) }
 .side h3 { display: flex; align-items: center; justify-content: space-between; height: 28px; margin: 18px 10px 2px 12px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap }
 .nav { display: flex; flex-direction: column; gap: 1px }
@@ -129,8 +130,8 @@ button:disabled { cursor: not-allowed; color: var(--muted); background-color: va
 /* Shut, the sidebar keeps its icons: views, pinned folders and settings. */
 .side-shut .side { padding: 0 10px 12px }
 .side-shut .brand span, .side-shut .nav span, .side-shut .side-foot span, .side-shut .row .name, .side-shut .row em, .side-shut .row .pin, .side-shut .row .marks { display: none }
-.side-shut .side-top { padding: var(--strip) 0 0; flex-direction: column; justify-content: center; height: auto; gap: 8px; margin-bottom: 8px }
-.side-shut .brand { flex: none }
+.side-shut .side-top { padding: 0; flex-direction: column; justify-content: center; height: auto; gap: 4px; margin-bottom: 8px }
+.side-shut .brand { flex: none; height: var(--strip) }
 .side-shut .nav button, .side-shut .side-foot, .side-shut .folders .row { justify-content: center; padding: 6px 0 }
 .side-shut .side h3 { justify-content: center; margin: 12px 0 2px }
 .side-shut .side h3 span, .side-shut .tree, .side-shut .tree-head, .side-shut .tags, .side-shut #from { display: none }
@@ -171,7 +172,12 @@ input[type=range] { width: 110px; accent-color: var(--ink) }
   animation: tile-in .45s var(--drift) both; animation-delay: calc(var(--k, 0) * 14ms);
 }
 @keyframes tile-in { from { opacity: 0; transform: translateY(10px) scale(.97) } }
+/* Redrawn after a change: tiles are just there, not rising in again. */
+.calm .tile { animation: none }
 .tile img, .tile video { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .25s, opacity .3s }
+/* The hovered tile's playing video or moving GIF, over its thumbnail once it has a frame. */
+.tile .live { position: absolute; inset: 0; opacity: 0 }
+.tile .live.ready { opacity: 1 }
 .js .tile img:not(.ready) { opacity: 0 }
 .tile:hover { outline: 2px solid var(--soft-2); outline-offset: -2px }
 .tile.veil img, .tile.veil video { filter: blur(18px) saturate(.8) }
@@ -228,8 +234,9 @@ input[type=range] { width: 110px; accent-color: var(--ink) }
 .peek-shut .peek-label, .peek-shut .peek-body { display: none }
 .peek-shut .peek-rail { display: flex }
 .peek-rail hr { width: 24px; border: 0; border-top: 1px solid var(--line); margin: 4px 0 }
-.pv { position: relative; border-radius: var(--r-panel); overflow: hidden; background: var(--soft); display: grid; place-items: center; min-height: 160px; max-height: 340px; animation: pop .4s var(--float) }
-.pv img, .pv video { width: 100%; max-height: 340px; object-fit: contain; display: block; cursor: zoom-in }
+.pv { position: relative; border-radius: var(--r-panel); overflow: hidden; background: var(--soft); display: grid; place-items: center; min-height: 160px; animation: pop .4s var(--float) }
+/* As wide as the panel, as tall as the picture's shape asks, never taller than half the window. */
+.pv img, .pv video { width: 100%; height: auto; max-height: min(440px, 50vh); object-fit: contain; display: block; cursor: zoom-in }
 .pv .glyph { padding: 40px 20px 24px; display: grid; gap: 12px; justify-items: center; text-align: center; color: var(--muted); width: 100% }
 .pv .glyph .i { width: 36px; height: 36px; stroke-width: 1.5 }
 .pv audio { width: calc(100% - 24px) }
@@ -276,8 +283,9 @@ kbd { font: inherit; font-size: 12px; padding: 1px 6px; border-radius: 6px; back
 /* Viewer, graphite in both themes so photos sit on dark. */
 .viewer { position: fixed; inset: 0; background: var(--night); color: var(--night-ink); z-index: 10; animation: fade .25s }
 @keyframes fade { from { opacity: 0 } }
-.stage { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; padding: 64px 0 16px }
-.stage img, .stage video { max-width: 100%; max-height: 100%; object-fit: contain; transition: transform .25s var(--snap); transform-origin: center }
+.stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 64px 16px 16px }
+/* Fitted to the window whatever its size: big photos shrink, small ones and videos grow to fill it. */
+.stage img, .stage video { width: 100%; height: 100%; object-fit: contain; transition: transform .25s var(--snap); transform-origin: center }
 .stage img { cursor: zoom-in }
 .stage.zoomed img { cursor: grab }
 .stage audio { width: min(560px, 80vw) }
@@ -363,5 +371,48 @@ kbd { font: inherit; font-size: 12px; padding: 1px 6px; border-radius: 6px; back
 .toast button { height: 30px; padding: 0 12px; border-radius: var(--r-pill); color: var(--crema); font-weight: 600 }
 .toast button:hover { background: var(--wash) }
 .has-selbar .toast { bottom: 80px }
+
+/* Settings: sections on the left, rows of a name and its control on the right. */
+.prefs { border: 0; padding: 0; border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); width: min(1040px, 94vw); height: min(780px, 90vh); max-width: none; max-height: none; overflow: hidden }
+.prefs[open] { display: flex; flex-direction: column; animation: sheet-in .4s var(--float) }
+.prefs::backdrop { background: var(--backdrop); animation: fade .25s }
+.prefs-head { display: flex; align-items: center; justify-content: space-between; height: 52px; padding: 0 10px 0 22px; border-bottom: 1px solid var(--line); flex: none }
+.prefs-head h2 { margin: 0; font-size: 16px; font-weight: 600 }
+.prefs-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px minmax(0, 1fr) }
+.prefs-nav { display: flex; flex-direction: column; gap: 2px; padding: 16px 12px; border-right: 1px solid var(--line); overflow-y: auto }
+.psearch { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; margin-bottom: 14px; border-radius: var(--r-row); border: 1px solid var(--line); background: var(--bg); color: var(--muted) }
+.psearch:focus-within { border-color: var(--ink) }
+.psearch .i { width: 16px; height: 16px }
+.psearch input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--ink) }
+.prefs-nav h5 { margin: 0 0 6px 10px; font-size: 12.5px; font-weight: 500; color: var(--muted) }
+#prefs-nav-list button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 0 10px; border-radius: var(--r-row); text-align: left; white-space: nowrap }
+#prefs-nav-list button:hover { background: var(--soft) }
+#prefs-nav-list button.on { background: var(--soft-2); font-weight: 500 }
+#prefs-nav-list .i { color: var(--muted) }
+#prefs-nav-list button.on .i { color: var(--ink) }
+.prefs-page { outline: 0; overflow-y: auto; padding: 22px 28px 40px }
+.psec + .psec { margin-top: 34px }
+.psec h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600 }
+.prow { display: flex; align-items: center; gap: 20px; min-height: 52px; padding: 12px 0; border-bottom: 1px solid var(--line) }
+.prow:last-child { border-bottom: 0 }
+.prow.wide { display: block }
+.ptext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px }
+.ptext small { color: var(--muted); font-size: 12.5px; line-height: 1.4; overflow-wrap: anywhere }
+.prow .chiprow { justify-content: flex-end }
+.pill.small { height: 32px; padding: 0 14px; font-size: 13px }
+.choose { position: relative; display: inline-flex; align-items: center; gap: 6px; flex: none; color: var(--ink) }
+.choose select { appearance: none; height: 32px; padding: 0 22px 0 8px; border: 0; border-radius: var(--r-row); background: transparent; text-align: right; cursor: pointer; font-weight: 500 }
+.choose select:hover { background: var(--soft) }
+.choose .i { position: absolute; right: 4px; width: 15px; height: 15px; pointer-events: none; color: var(--muted) }
+.choose option { background: var(--surface); color: var(--ink) }
+.switch { position: relative; flex: none; width: 40px; height: 22px; border-radius: var(--r-pill); background: var(--soft-2); transition: background-color .2s }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .25s var(--snap) }
+.switch.on { background: var(--accent) }
+.switch.on::after { transform: translateX(18px); background: var(--accent-ink) }
+.prefs .list .line { background: var(--bg) }
+.prefs .recovery, .prefs .list { padding: 4px 0 }
+.prefs .btns { display: flex; justify-content: flex-start; gap: 8px; margin-top: 6px; flex-wrap: wrap }
+.prefs p { margin: 0; font-size: 13px; color: var(--muted) }
+@media (max-width: 760px) { .prefs-body { grid-template-columns: 64px minmax(0, 1fr) } .prefs-nav h5, .psearch input, #prefs-nav-list button { font-size: 0 } #prefs-nav-list button { justify-content: center; padding: 0 } }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important } }

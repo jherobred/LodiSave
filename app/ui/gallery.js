@@ -24,7 +24,7 @@ const size = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : b >
 const clock = (s) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '');
 const day = (ms) => new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 const under = (dir, root) => low(dir) === low(root) || low(dir).startsWith(low(root).replace(/\\$/, '') + '\\');
-const OOPS = { blocked: 'Windows blocked that.', taken: 'That name is taken.', name: "Windows can't use that name.", gone: 'That file is gone.', outside: "That's outside your gallery folders.", restore: "Couldn't bring it back. Check the Recycle Bin.", root: "A whole drive can't be added. Pick a folder on it.", system: 'Windows and apps keep that folder for themselves, so it stays out.', nodrive: "Google Drive isn't set up in this build.", login: 'Google Drive needs you to connect again.', offline: "Couldn't reach Google Drive.", denied: 'Google Drive was not connected.', timeout: 'Sign-in took too long. Try again.', busy: 'A backup is already running.', code: "That code doesn't match. Check that the clocks on your phone and PC are right.", used: 'That code was just used. Wait for the next one.', wait: 'Too many wrong codes. Try again in a minute.', expired: 'Setup timed out. Start again.', off: 'No authenticator is linked.' };
+const OOPS = { blocked: 'Windows blocked that.', taken: 'That name is taken.', name: "Windows can't use that name.", gone: 'That file is gone.', outside: "That's outside your gallery folders.", restore: "Couldn't bring it back. Check the Recycle Bin.", root: "A whole drive can't be added. Pick a folder on it.", system: 'Windows and apps keep that folder for themselves, so it stays out.', nodrive: "Google Drive isn't set up in this build.", login: 'Google Drive needs you to connect again.', offline: "Couldn't reach Google Drive.", denied: 'Google Drive was not connected.', timeout: 'Sign-in took too long. Try again.', busy: 'A backup is already running.', code: "That code doesn't match. Check that the clocks on your phone and PC are right.", used: 'That code was just used. Wait for the next one.', wait: 'Too many wrong codes. Try again in a minute.', expired: 'Setup timed out. Start again.', off: 'No authenticator is linked.', into: "A folder can't go inside itself.", drive: 'Folders move only within the same drive.', added: 'Added folders, and folders holding one, stay where they are.' };
 
 let lib = { roots: [], items: [], folders: [], saves: '', backed: [] };
 const ui = {
@@ -50,17 +50,44 @@ function swap(update) {
 
 // Data --------------------------------------------------------------------------------------------
 
+// Lookups the window makes many times per paint, built once per load.
+let byPath = new Map(), kidsOf = new Map(), lockedIn = new Set();
+function index() {
+  byPath = new Map(lib.items.map((i) => [i.path, i]));
+  kidsOf = new Map();
+  for (const f of lib.folders) if (f.parent) kidsOf.set(f.parent, [...(kidsOf.get(f.parent) || []), f]);
+  // Folders with a locked file anywhere under them.
+  lockedIn = new Set();
+  const dirs = new Map(lib.folders.map((f) => [low(f.path), f]));
+  for (const i of lib.items) {
+    if (i.kind !== 'locked') continue;
+    for (let d = dirs.get(low(i.dir)); d && !lockedIn.has(d.path); d = d.parent && dirs.get(low(d.parent))) lockedIn.add(d.path);
+  }
+}
+
+// Whether a reload found what the window already shows, so it can skip repainting.
+const same = (a, b) => JSON.stringify([a.roots, a.folders, a.backed]) === JSON.stringify([b.roots, b.folders, b.backed])
+  && a.items.length === b.items.length
+  && a.items.every((x, n) => { const y = b.items[n]; return x.path === y.path && x.modified === y.modified && x.bytes === y.bytes && x.fav === y.fav && x.blur === y.blur && x.tags.join() === y.tags.join() });
+
 let loading = null;
 async function load() {
+  let changed = false;
   loading ??= invoke('gallery').then((l) => {
+    if (same(lib, l)) return;
+    changed = true;
     lib = l;
+    index();
     ui.backed = new Set(l.backed);
-    for (const p of [...ui.sel]) if (!lib.items.some((i) => i.path === p)) ui.sel.delete(p);
+    for (const p of [...ui.sel]) if (!byPath.has(p)) ui.sel.delete(p);
     if (ui.view === 'folder' && !lib.folders.some((f) => f.path === ui.folder)) ui.view = 'all';
   }).finally(() => (loading = null));
   await loading;
-  paint();
+  // A reload after a change keeps the grid where it was scrolled.
+  if (changed || !booted) paint(booted);
+  booted = true;
 }
+let booted = false;
 
 const isRoot = (p) => lib.roots.some((r) => low(r) === low(p));
 const pinned = (p) => (ui.pinMode === 'all' && isRoot(p) ? !ui.unpins.includes(low(p)) : ui.pins.includes(low(p)));
@@ -95,7 +122,7 @@ function scope() {
 // Sidebar -----------------------------------------------------------------------------------------
 
 function folderRow(f, depth, tree) {
-  const kids = tree ? lib.folders.filter((c) => c.parent === f.path) : [];
+  const kids = tree ? kidsOf.get(f.path) || [] : [];
   const row = el('button', `row${ui.view === 'folder' && ui.folder === f.path ? ' on' : ''}`, { type: 'button', title: f.path });
   row.style.setProperty('--depth', depth);
   const twist = el('span', `twist${kids.length ? (ui.open.has(f.path) ? '' : ' shut') : ' none'}`);
@@ -111,17 +138,28 @@ function folderRow(f, depth, tree) {
   pin.onclick = (e) => { e.stopPropagation(); togglePin(f.path) };
   const marks = el('span', 'marks');
   if (f.blur) marks.append(icon('eye-off'));
-  if (lib.items.some((i) => i.kind === 'locked' && under(i.dir, f.path))) marks.append(icon('lock'));
-  row.append(...(tree ? [twist] : []), icon('folder'), el('span', 'name', { textContent: f.parent ? f.name : f.name || f.path }), marks, el('em', '', { textContent: f.total || '' }), pin);
+  if (lockedIn.has(f.path)) marks.append(icon('lock'));
+  row.append(...(tree ? [twist] : []), icon('folder'), el('span', 'name', { textContent: isRoot(f.path) ? base(f.path) || f.path : f.name }), marks, el('em', '', { textContent: f.total || '' }), pin);
   row.onclick = () => go({ view: 'folder', folder: f.path });
   row.oncontextmenu = (e) => { e.preventDefault(); folderMenu(f, e.clientX, e.clientY) };
-  // Tiles dropped on a folder move there, or copy with Ctrl held.
-  row.ondragover = (e) => { if (e.dataTransfer.types.includes('text/lodisave')) { e.preventDefault(); e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move'; row.classList.add('drop') } };
+  // Tiles dropped on a folder move there, or copy with Ctrl held. A folder dragged onto another
+  // moves into it; added folders stay put.
+  row.draggable = !isRoot(f.path);
+  row.ondragstart = (e) => { e.dataTransfer.setData('text/lodisave-dir', f.path); e.dataTransfer.effectAllowed = 'move' };
+  row.ondragover = (e) => {
+    const files = e.dataTransfer.types.includes('text/lodisave'), dir = e.dataTransfer.types.includes('text/lodisave-dir');
+    if (!files && !dir) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = files && e.ctrlKey ? 'copy' : 'move';
+    row.classList.add('drop');
+  };
   row.ondragleave = () => row.classList.remove('drop');
   row.ondrop = (e) => {
     e.preventDefault();
     row.classList.remove('drop');
-    place(JSON.parse(e.dataTransfer.getData('text/lodisave')), f.path, e.ctrlKey);
+    const dir = e.dataTransfer.getData('text/lodisave-dir');
+    if (dir) moveFolder(dir, f.path);
+    else place(JSON.parse(e.dataTransfer.getData('text/lodisave')), f.path, e.ctrlKey);
   };
   const out = [row];
   if (tree && ui.open.has(f.path)) for (const k of kids.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))) out.push(...folderRow(k, depth + 1, true));
@@ -134,7 +172,8 @@ function paintSide() {
   const pins = lib.folders.filter((f) => pinned(f.path));
   $('pinned-head').hidden = !pins.length;
   $('pinned').replaceChildren(...pins.flatMap((f) => folderRow(f, 0, false)));
-  $('tree').replaceChildren(...lib.folders.filter((f) => !f.parent).flatMap((f) => folderRow(f, 0, true)));
+  // Every added folder is a top row, also one added inside another.
+  $('tree').replaceChildren(...lib.roots.map((r) => lib.folders.find((f) => low(f.path) === low(r))).filter(Boolean).flatMap((f) => folderRow(f, 0, true)));
   const tags = new Map();
   for (const i of lib.items) for (const t of i.tags) tags.set(t, (tags.get(t) || 0) + 1);
   $('tags-head').hidden = !tags.size;
@@ -159,7 +198,11 @@ function paintSide() {
 // Grid --------------------------------------------------------------------------------------------
 
 const src = (p) => convertFileSrc(p);
-const CHUNK = 300;
+// Windows' own thumbnail of a file, sized for the tiles on this screen. Tiles fall back to the file
+// when Windows has none.
+const thumbSize = () => (ui.zoom * devicePixelRatio > 300 ? 512 : 256);
+const thumb = (r) => `${convertFileSrc(r.path, 'thumb')}?s=${thumbSize()}&m=${r.modified}`;
+const CHUNK = 160;
 // Videos get their file only once they scroll near, so a folder of clips doesn't load them all.
 const near = new IntersectionObserver((entries) => {
   for (const e of entries) {
@@ -173,13 +216,22 @@ more.observe($('more'));
 
 // A tile's height in the Pinterest layout: as many 2 px rows as its picture is tall at the column
 // width, plus the 6 px gap. Pictures not seen yet are square.
-function fit(t) {
+function fit(t, width = t.clientWidth) {
   if (ui.layout !== 'masonry') return;
   const r = ui.ratios.get(ui.shown[t.dataset.n]?.path) || 1;
-  t.style.setProperty('--rows', Math.ceil((t.clientWidth / r + 6) / 2));
+  t.style.setProperty('--rows', Math.ceil((width / r + 6) / 2));
+}
+// Every tile in a box is as wide as the first: one read per box, then only writes.
+function fitAll(from = 0) {
+  if (ui.layout !== 'masonry') return;
+  for (const box of $('grid').querySelectorAll('.tiles')) {
+    const w = box.firstElementChild?.clientWidth || 0;
+    for (const t of box.children) if (+t.dataset.n >= from) fit(t, w);
+  }
 }
 const learn = (t, path, w, h) => {
   if (!w || !h) return;
+  if (ui.ratios.has(path)) return fit(t);
   // Very tall or wide pictures are cut to 1:2.5 or 2.5:1, so one can't fill the screen.
   ui.ratios.set(path, Math.min(2.5, Math.max(0.4, w / h)));
   fit(t);
@@ -190,22 +242,39 @@ function tile(r, n) {
   t.dataset.n = n;
   t.style.setProperty('--k', Math.min(n - ui.drawn, 24));
   const badges = el('div', 'badges');
-  if (r.kind === 'image' || r.kind === 'gif') {
-    const img = el('img', '', { src: src(r.path), loading: 'lazy', decoding: 'async', alt: '' });
+  if (r.kind === 'image' || r.kind === 'gif' || r.kind === 'video') {
+    const img = el('img', '', { src: thumb(r), loading: 'lazy', decoding: 'async', alt: '' });
     img.onload = () => { img.classList.add('ready'); learn(t, r.path, img.naturalWidth, img.naturalHeight) };
+    img.onerror = () => {
+      if (r.kind !== 'video') { if (img.src !== src(r.path)) img.src = src(r.path); return }
+      // No Windows thumbnail for this video (a codec Windows lacks): a still from the file itself.
+      const v = el('video', '', { muted: true, preload: 'metadata', playsInline: true });
+      v.dataset.src = `${src(r.path)}#t=0.5`;
+      v.onloadedmetadata = () => learn(t, r.path, v.videoWidth, v.videoHeight);
+      near.observe(v);
+      img.replaceWith(v);
+    };
     t.append(img);
     if (r.kind === 'gif') badges.append(el('span', '', { textContent: 'GIF' }));
-  } else if (r.kind === 'video') {
-    const v = el('video', '', { muted: true, loop: true, preload: 'metadata', playsInline: true });
-    v.dataset.src = `${src(r.path)}#t=0.5`;
-    near.observe(v);
-    const len = el('span');
-    len.append(icon('play'));
-    v.onloadedmetadata = () => { len.append(clock(v.duration)); learn(t, r.path, v.videoWidth, v.videoHeight) };
-    badges.append(len);
-    t.append(v);
-    t.onmouseenter = () => { if (ui.hover === 'play' && !r.blur && v.src) v.play().catch(() => {}) };
-    t.onmouseleave = () => v.pause();
+    if (r.kind === 'video') { const len = el('span'); len.append(icon('play')); badges.append(len) }
+    // Hovered, a video plays and a GIF moves, from the file; only that one tile pays for it.
+    let live = null;
+    t.onmouseenter = () => {
+      if (ui.hover !== 'play' || r.blur || live || r.kind === 'image') return;
+      const video = r.kind === 'video';
+      live = el(video ? 'video' : 'img', 'live', video ? { src: src(r.path), muted: true, loop: true, autoplay: true, playsInline: true } : { src: src(r.path), alt: '' });
+      const shown = live;
+      shown.onloadeddata = shown.onload = () => shown.classList.add('ready');
+      if (video) shown.onloadedmetadata = () => { const len = badges.firstChild; if (len && len.childNodes.length < 2) len.append(clock(shown.duration)) };
+      t.insertBefore(shown, badges);
+    };
+    t.onmouseleave = () => {
+      if (!live) return;
+      live.removeAttribute('src');
+      if (live.load) live.load(); // lets go of the file and the decoder
+      live.remove();
+      live = null;
+    };
   } else if (r.kind === 'locked') {
     const g = el('div', 'glyph');
     g.append(icon('lock'));
@@ -280,10 +349,11 @@ function drawMore() {
   }
   const from = ui.drawn;
   ui.drawn = end;
-  if (ui.layout === 'masonry') for (const t of grid.querySelectorAll('.tile')) if (+t.dataset.n >= from) fit(t);
+  fitAll(from);
 }
 // The column width changes with the window, the panels and the tile size.
-new ResizeObserver(() => requestAnimationFrame(() => { for (const t of $('grid').querySelectorAll('.tile')) fit(t) })).observe($('grid'));
+let refit = 0;
+new ResizeObserver(() => { cancelAnimationFrame(refit); refit = requestAnimationFrame(() => fitAll()) }).observe($('grid'));
 
 function groupHead(label, from) {
   const h = el('div', 'group', { textContent: label });
@@ -305,10 +375,12 @@ const dupGroup = (p) => {
   return `${ui.dups[n].length} copies, ${size(r?.bytes || 0)} each`;
 };
 
-function paintGrid() {
+function paintGrid(keep = false) {
+  const at = keep ? $('scroll').scrollTop : 0;
   ui.shown = scope();
   ui.drawn = 0;
   lastGroup = null;
+  $('grid').classList.toggle('calm', keep);
   $('grid').replaceChildren();
   $('scroll').scrollTop = 0;
   const empty = $('empty');
@@ -316,9 +388,14 @@ function paintGrid() {
   if (!lib.roots.length) emptyStart(empty);
   else if (!ui.shown.length) empty.replaceChildren(el('h2', '', { textContent: ui.view === 'dups' ? (ui.dups ? 'No duplicates here' : 'Looking for duplicates…') : 'Nothing here' }), el('p', '', { textContent: ui.query ? 'Nothing matches your search.' : 'Photos and videos in this view show up here.' }));
   drawMore();
+  if (keep) {
+    // Drawn down to where the grid was, so it comes back to the same place without rising in again.
+    while (ui.drawn < ui.shown.length && $('grid').scrollHeight < at + $('scroll').clientHeight) drawMore();
+    $('scroll').scrollTop = at;
+  }
 }
 
-function paint() {
+function paint(keep = false) {
   const titles = { all: 'All media', fav: 'Favorites', recent: 'Last 30 days', dups: 'Duplicates' };
   const title = ui.view === 'folder' ? base(ui.folder) || ui.folder : ui.view === 'tag' ? `#${ui.tag}` : ui.view === 'from' ? `Saved from ${ui.from}` : titles[ui.view];
   if ($('title').textContent !== title) {
@@ -329,7 +406,7 @@ function paint() {
   }
   $('deep-wrap').hidden = ui.view !== 'folder';
   paintSide();
-  paintGrid();
+  paintGrid(keep);
   const total = ui.shown.reduce((n, r) => n + r.bytes, 0);
   $('sub').replaceChildren(
     ...(ui.view === 'folder' ? [el('span', '', { textContent: ui.folder, title: ui.folder })] : []),
@@ -415,7 +492,7 @@ function paintSel() {
 }
 
 const picked = () => [...ui.sel];
-const item = (p) => lib.items.find((i) => i.path === p);
+const item = (p) => byPath.get(p);
 
 // Actions -----------------------------------------------------------------------------------------
 
@@ -463,6 +540,25 @@ async function place(ps, dest, copy) {
       for (const [dir, files] of back) await invoke('g_place', { paths: files, dest: dir, copy: false });
     };
     toast(`${copy ? 'Copied' : 'Moved'} ${done.length} to ${base(dest)}`, undo);
+  } catch (e) { oops(e) }
+}
+
+// Moves a folder into another; Undo moves it back to where it was.
+async function moveFolder(from, dest) {
+  const parent = lib.folders.find((f) => f.path === from)?.parent;
+  try {
+    const to = await invoke('g_move_dir', { path: from, dest });
+    if (to === from) return;
+    // Open, pinned and current folders follow it.
+    const swapIn = (p) => (low(p) === low(from) || low(p).startsWith(low(from) + '\\') ? to + p.slice(from.length) : p);
+    ui.open = new Set([...ui.open].map(swapIn));
+    ui.open.add(dest);
+    keep('g-open', [...ui.open]);
+    ui.pins = ui.pins.map((p) => low(swapIn(p)));
+    keep('g-pins', ui.pins);
+    if (ui.folder) ui.folder = swapIn(ui.folder);
+    await load();
+    toast(`Moved ${base(from)} into ${base(dest) || dest}`, parent ? () => invoke('g_move_dir', { path: to, dest: parent }) : null);
   } catch (e) { oops(e) }
 }
 
@@ -557,7 +653,7 @@ function tileMenu(r, x, y) {
 }
 
 function folderMenu(f, x, y) {
-  const root = !f.parent;
+  const root = isRoot(f.path);
   menu(x, y, [
     { icon: 'pin', label: pinned(f.path) ? 'Unpin' : 'Pin to the top', run: () => togglePin(f.path) },
     { icon: 'plus', label: 'New folder inside…', run: () => newFolderSheet(f.path) },
@@ -740,44 +836,142 @@ function renameFolderSheet(f) {
   input.select();
 }
 
-async function settingsSheet() {
-  const roots = el('div', 'list');
-  for (const r of lib.roots) {
-    const line = el('div', 'line');
-    const rm = el('button', '', { type: 'button', textContent: 'Remove' });
-    rm.onclick = async () => { await removeRoot(r); settingsSheet() };
-    line.append(icon('folder'), el('span', '', { textContent: r, title: r }), rm);
-    roots.append(line);
+// Settings: sections in a list on the left, and on the right each setting as a row with its name
+// on the left and its control on the right. The search box filters rows across every section.
+const PAGES = [
+  ['general', 'General', 'prefs'],
+  ['folders', 'Folders', 'folder'],
+  ['recovery', 'Password recovery', 'lock'],
+  ['windows', 'Windows permissions', 'shield'],
+  ['repair', 'Repair videos', 'refresh'],
+];
+let prefsPage = 'general';
+
+const prow = (label, note, ...controls) => {
+  const r = el('div', 'prow');
+  const t = el('div', 'ptext');
+  t.append(el('span', '', { textContent: label }), ...(note ? [el('small', '', { textContent: note })] : []));
+  r.append(t, ...controls);
+  return r;
+};
+const psec = (title, ...rows) => { const s = el('section', 'psec'); s.append(el('h3', '', { textContent: title }), ...rows); return s };
+function toggle(on, onChange) {
+  const b = el('button', `switch${on ? ' on' : ''}`, { type: 'button' });
+  b.setAttribute('role', 'switch');
+  b.setAttribute('aria-checked', String(on));
+  b.onclick = () => { on = !on; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); onChange(on) };
+  return b;
+}
+function choose(options, value, onChange) {
+  const w = el('label', 'choose');
+  const sel = el('select');
+  for (const [v, label] of options) sel.append(el('option', '', { value: v, textContent: label }));
+  sel.value = value;
+  sel.onchange = () => onChange(sel.value);
+  w.append(sel, icon('down'));
+  return w;
+}
+
+async function prefsSections(page) {
+  if (page === 'general') return [
+    psec('Appearance',
+      prow('Motion', 'Shared with the tray panel.', toggle(pref('motion', 'on') !== 'off', (on) => { keep('motion', on ? 'on' : 'off'); document.documentElement.classList.toggle('still', !on) })),
+    ),
+    psec('Grid',
+      prow('Videos and GIFs', 'What a tile does under the pointer.', choose([['play', 'Play on hover'], ['still', 'Stay still']], ui.hover, (v) => { ui.hover = v; keep('g-hover', v) })),
+      prow('Group by month', 'With newest or oldest first.', toggle(ui.months === 'on', (on) => { ui.months = on ? 'on' : 'off'; keep('g-months', ui.months); paintGrid() })),
+      prow('Pinned folders', 'Pinned folders sit at the top of the sidebar.', choose([['all', 'Every added folder'], ['pick', 'Only the ones I pin']], ui.pinMode, (v) => { ui.pinMode = v; keep('g-pinmode', v); paintSide() })),
+    ),
+  ];
+  if (page === 'folders') {
+    const rows = lib.roots.map((r) => {
+      const rm = el('button', 'pill small', { type: 'button', textContent: 'Remove' });
+      rm.onclick = async () => { await removeRoot(r); settingsSheet() };
+      return prow(base(r) || r, r, rm);
+    });
+    const add = el('button', 'pill small primary', { type: 'button', textContent: 'Add…' });
+    add.onclick = async () => { await addFolder(); settingsSheet() };
+    const quick = el('div', 'chiprow');
+    for (const [label, p] of await suggestions()) {
+      const b = el('button', '', { type: 'button', textContent: `+ ${label}`, title: p });
+      b.onclick = async () => { await addFolder(p); settingsSheet() };
+      quick.append(b);
+    }
+    return [psec('Folders the gallery can see',
+      prow('Add a folder', 'Add as many as you like, also one inside another. Each shows as its own folder in the sidebar.', add),
+      ...(quick.childElementCount ? [prow('Suggested', '', quick)] : []),
+      ...rows,
+      prow('What stays out', "Whole drives, Windows, Program Files, ProgramData and AppData can't be added, links aren't followed, files only in OneDrive's cloud aren't downloaded, and deletes go to the Recycle Bin."),
+    )];
   }
-  const quick = el('div', 'chiprow');
-  for (const [label, p] of await suggestions()) {
-    const b = el('button', '', { type: 'button', textContent: `+ ${label}`, title: p });
-    b.onclick = async () => { await addFolder(p); settingsSheet() };
-    quick.append(b);
+  if (page === 'recovery') return [psec('Password recovery', prow('Authenticator app', 'A 6-digit code opens a locked file when its password is forgotten.'), wide(await recoveryBox()))];
+  if (page === 'windows') return [psec('Windows permissions', wide(await permissionsBox()))];
+  const status = el('small', 'note');
+  const go2 = el('button', 'pill small primary', { type: 'button', textContent: 'Repair' });
+  go2.onclick = async () => {
+    go2.disabled = true;
+    const { fixed, failed, checked } = await repairVideos((t) => (status.textContent = t));
+    status.textContent = !checked ? 'No MP4 videos in your folders.' : `Checked ${checked}. ${fixed ? `Repaired ${fixed}.` : 'Nothing needed fixing.'}${failed ? ` ${failed} couldn't be (Windows blocked it, or the file is in use).` : ''}`;
+    go2.disabled = false;
+    if (fixed) load();
+  };
+  const r = prow('Repair videos saved by older versions', 'Fixes sound that runs ahead of or behind the picture, and clips that repeat, in videos LodiSave saved from streaming sites before. Each original goes to the Recycle Bin.', go2);
+  r.querySelector('.ptext').append(status);
+  return [psec('Repair videos', r)];
+}
+const wide = (node) => { const r = el('div', 'prow wide'); r.append(node); return r };
+
+async function settingsSheet(page = prefsPage) {
+  if ($('sheet').open) close();
+  prefsPage = page;
+  const q = $('prefs-q').value.trim().toLowerCase();
+  $('prefs-nav-list').replaceChildren(...PAGES.map(([id, label, ic]) => {
+    const b = el('button', !q && id === prefsPage ? 'on' : '', { type: 'button' });
+    b.append(icon(ic), label);
+    b.onclick = () => { $('prefs-q').value = ''; settingsSheet(id) };
+    return b;
+  }));
+  let sections;
+  if (q) {
+    sections = (await Promise.all(PAGES.map(([id]) => prefsSections(id)))).flat();
+    for (const sec of sections) {
+      const title = sec.querySelector('h3').textContent.toLowerCase();
+      for (const r of sec.querySelectorAll('.prow')) r.hidden = !title.includes(q) && !r.textContent.toLowerCase().includes(q);
+      sec.hidden = ![...sec.querySelectorAll('.prow')].some((r) => !r.hidden);
+    }
+    if (sections.every((x) => x.hidden)) sections.push(el('p', 'note', { textContent: 'No settings match.' }));
+  } else sections = await prefsSections(prefsPage);
+  $('prefs-page').replaceChildren(...sections);
+  if (!$('prefs').open) $('prefs').showModal();
+}
+$('prefs-close').onclick = () => $('prefs').close();
+let prefsTyping;
+$('prefs-q').oninput = () => { clearTimeout(prefsTyping); prefsTyping = setTimeout(() => settingsSheet(), 120) };
+// A click on the dim area around the dialog closes it.
+$('prefs').onclick = (e) => { if (e.target === $('prefs')) $('prefs').close() };
+
+// Videos the extension joined before its timeline fix (0.3.2) can have sound out of step with the
+// picture or repeated clips. Each fragmented MP4 in the folders is joined again with the current
+// joiner; files it doesn't change are left alone.
+async function repairVideos(say) {
+  ui.sel.clear();
+  paintSel(); // the preview lets go of a video it was playing
+  const vids = lib.items.filter((i) => i.kind === 'video' && /\.(mp4|m4v)$/i.test(i.name) && i.bytes <= MAX_LOCK);
+  let fixed = 0, failed = 0;
+  for (const [n, r] of vids.entries()) {
+    say(`Checking ${n + 1} of ${vids.length}…`);
+    try {
+      // Its first 256 KB tell whether it is fragmented MP4, the only kind LodiSave joined.
+      const head = new Uint8Array(await (await fetch(src(r.path), { headers: { Range: 'bytes=0-262143' } })).arrayBuffer());
+      if (!LodiMP4.fragmented(head)) continue;
+      // Windows' asset server may send the whole file instead of the range asked for.
+      const out = LodiMP4.repair(head.length === r.bytes ? head : await readFile(r.path));
+      if (!out) continue;
+      await invoke('g_replace', out, { headers: { path: ascii(r.path) } });
+      fixed++;
+    } catch { failed++ }
   }
-  sheet(
-    el('h2', '', { textContent: 'Folders and settings' }),
-    el('h4', '', { textContent: 'Folders the gallery can see' }),
-    el('p', '', { textContent: 'LodiSave reads only these folders and the folders inside them. Whole drives, Windows, Program Files, ProgramData and AppData can\'t be added, links and junctions aren\'t followed, files only in OneDrive\'s cloud aren\'t downloaded, and deletes go to the Recycle Bin.' }),
-    ...(lib.roots.length ? [roots] : []),
-    buttons(button('Add a folder…', 'primary', async () => { await addFolder(); settingsSheet() })),
-    ...(quick.childElementCount ? [quick] : []),
-    el('h4', '', { textContent: 'Password recovery' }),
-    await recoveryBox(),
-    el('h4', '', { textContent: 'Windows permissions' }),
-    await permissionsBox(),
-    el('h4', '', { textContent: 'Pinned folders' }),
-    seg([['all', 'Pin every added folder'], ['pick', 'Only the ones I pin']], ui.pinMode, (v) => { ui.pinMode = v; keep('g-pinmode', v); paintSide() }),
-    el('p', 'note', { textContent: 'Pinned folders sit at the top of the sidebar. Pin any folder, or unpin one, with its pin or by right-clicking it.' }),
-    el('h4', '', { textContent: 'Videos in the grid' }),
-    seg([['play', 'Play on hover'], ['still', 'Stay still']], ui.hover, (v) => { ui.hover = v; keep('g-hover', v) }),
-    el('h4', '', { textContent: 'Group by month' }),
-    seg([['on', 'On'], ['off', 'Off']], ui.months, (v) => { ui.months = v; keep('g-months', v); paintGrid() }),
-    el('h4', '', { textContent: 'Motion' }),
-    seg([['on', 'On'], ['off', 'Off']], pref('motion', 'on'), (v) => { keep('motion', v); document.documentElement.classList.toggle('still', v === 'off') }),
-    el('p', 'note', { textContent: 'Shared with the tray panel.' }),
-    buttons(button('Done', 'primary', close)),
-  );
+  return { fixed, failed, checked: vids.length };
 }
 
 // A build without Google's sign-in client for Drive shows Drive faded, as coming in a later version.
@@ -1009,7 +1203,7 @@ function lockSheet(rs, label) {
   const backup = el('p', 'note', { textContent: 'Checking for an authenticator…' });
   invoke('recovery_status').then((on) => {
     backup.className = on ? 'note ok' : 'warn';
-    backup.textContent = on ? 'Your authenticator app can open these too, on this PC, if you forget the password.' : "If you forget the password, the files can't be opened. Link an authenticator in Folders and settings first, and a code from your phone can open them instead.";
+    backup.textContent = on ? 'Your authenticator app can open these too, on this PC, if you forget the password.' : "If you forget the password, the files can't be opened. Link an authenticator in Settings › Password recovery first, and a code from your phone can open them instead.";
   });
   const ok = async () => {
     if (pass.value.length < 4) return (status.textContent = 'Use at least 4 characters.');
@@ -1061,7 +1255,7 @@ function unlockSheet(rs) {
       if (!(await invoke('recovery_status'))) {
         return sheet(
           el('h2', '', { textContent: 'No authenticator linked' }),
-          el('p', '', { textContent: 'Only the password can open this file. Link an authenticator in Folders and settings, and files you lock from then on can also be opened with a code from your phone.' }),
+          el('p', '', { textContent: 'Only the password can open this file. Link an authenticator in Settings › Password recovery, and files you lock from then on can also be opened with a code from your phone.' }),
           buttons(button('Back', '', passStep)),
         );
       }
@@ -1160,7 +1354,7 @@ async function recoveryBox() {
       box.replaceChildren(
         el('p', 'ok', { textContent: 'On. A code from your authenticator app opens files locked since you linked it.' }),
         el('p', 'note', { textContent: 'It works on this PC and this Windows account. It keeps locked files closed to anyone who copies them elsewhere or opens LodiSave without your phone; it can\'t stop a program running as you.' }),
-        buttons(button('Turn off', '', () => offSheet().then(settingsSheet))),
+        buttons(button('Turn off', '', () => offSheet().then(() => settingsSheet()))),
       );
     } else {
       box.replaceChildren(
@@ -1202,7 +1396,7 @@ async function setupSheet() {
     el('h4', '', { textContent: 'Then type the 6-digit code it shows' }),
     input, status,
     el('p', 'note', { textContent: 'Works on this PC and this Windows account. Files you lock from now on can be opened with your password or a code.' }),
-    buttons(button('Cancel', '', settingsSheet), button('Link', 'primary', ok)),
+    buttons(button('Cancel', '', () => settingsSheet()), button('Link', 'primary', ok)),
   );
   input.focus();
 }
@@ -1304,8 +1498,11 @@ function onePeek(body, r) {
   const url = r.url || src(r.path);
   const dims = el('span');
   if (r.kind === 'video') {
-    const v = el('video', '', { src: url, muted: true, autoplay: true, loop: true, controls: true });
+    const v = el('video', '', { src: url, muted: true, autoplay: true, loop: true, playsInline: true });
     v.onloadedmetadata = () => (dims.textContent = `${v.videoWidth} × ${v.videoHeight}, ${clock(v.duration)}`);
+    // The player's bar and buttons show only while the pointer is over the video.
+    box.onmouseenter = () => (v.controls = true);
+    box.onmouseleave = () => (v.controls = false);
     box.append(v);
   } else if (r.kind === 'audio') {
     const g = el('div', 'glyph');
@@ -1368,7 +1565,7 @@ function manyPeek(body, rs) {
   const turns = [[-9, -18], [6, 14], [-3, 0]];
   rs.slice(0, 3).forEach((r, i) => {
     const [deg, x] = turns[i];
-    const node = r.kind === 'image' || r.kind === 'gif' ? el('img', '', { src: src(r.path), alt: '' }) : el('div', 'ph');
+    const node = r.kind === 'image' || r.kind === 'gif' || r.kind === 'video' ? el('img', '', { src: thumb(r), alt: '' }) : el('div', 'ph');
     node.style.transform = `rotate(${deg}deg) translateX(${x}px)`;
     node.style.animationDelay = `${i * 60}ms`;
     stack.append(node);
@@ -1607,7 +1804,7 @@ $('v-trash').onclick = () => trash([view.list[view.at]]);
 // Keys --------------------------------------------------------------------------------------------
 
 addEventListener('keydown', (e) => {
-  if ($('sheet').open) return;
+  if ($('sheet').open || $('prefs').open) return;
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
   if (!$('viewer').hidden) {
     const r = item(view.list[view.at]);
@@ -1657,7 +1854,7 @@ function moveFocus(key, extend) {
 for (const b of $('nav').querySelectorAll('[data-view]')) b.onclick = () => go({ view: b.dataset.view, ...(b.dataset.view === 'dups' ? { dups: null } : {}) });
 $('open-drive').onclick = driveSheet;
 $('lock-now').onclick = lockAgain;
-$('open-settings').onclick = settingsSheet;
+$('open-settings').onclick = () => settingsSheet();
 $('add-folder').onclick = () => addFolder();
 $('refresh').onclick = () => { ui.dups = null; load() };
 $('scroll').onclick = (e) => { if (!e.target.closest('.tile,.group') && ui.sel.size) act('none') };
@@ -1719,7 +1916,7 @@ $('scroll').addEventListener('wheel', (e) => {
 }, { passive: false });
 // Files changed in File Explorer show up when the window comes back.
 let shownAt = 0;
-addEventListener('focus', () => { if (Date.now() - shownAt > 4000 && $('viewer').hidden && !$('sheet').open) load(); shownAt = Date.now() });
+addEventListener('focus', () => { if (Date.now() - shownAt > 4000 && $('viewer').hidden && !$('sheet').open && !$('prefs').open) load(); shownAt = Date.now() });
 document.addEventListener('contextmenu', (e) => { if (!e.target.closest('.tile,.row,input')) e.preventDefault() });
 
 load();

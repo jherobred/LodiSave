@@ -1,6 +1,7 @@
 // Fragmented MP4 (CMAF) surgery: what DASH, HLS fMP4 and MediaSource players stream.
 // merge(video, audio) joins a video-only and an audio-only stream into one file with both tracks.
 // clean(bytes) keeps one continuous run of a single-track stream, dropping repeated init segments.
+// repair(bytes) fixes a file an older LodiSave joined: looped fragments, video starting after audio.
 // Pure byte work with no dependencies, so the extension and the Android WebView can both run it.
 // Both return null when the input isn't fragmented MP4.
 var LodiMP4 = (() => {
@@ -253,6 +254,48 @@ var LodiMP4 = (() => {
     return concat(parts);
   }
 
-  return { merge, clean };
+  // Whether the start of a file (its first few hundred KB is enough) is fragmented MP4, the only kind
+  // LodiSave's joiner wrote and repair() can fix.
+  function fragmented(head) {
+    const moov = boxes(head).find((x) => x.type === 'moov');
+    return !!moov && !!child(head, moov, 'mvex');
+  }
+
+  // A file saved by an older LodiSave, whose joiner kept looped fragments and let the video start
+  // seconds after the audio: its tracks are split back into the streams the player fed and joined
+  // again. Null when it isn't fragmented MP4 or nothing changes.
+  function repair(b) {
+    const top = boxes(b), ftyp = top.find((x) => x.type === 'ftyp'), moov = top.find((x) => x.type === 'moov');
+    const mvex = moov && child(b, moov, 'mvex');
+    if (!mvex) return null;
+    const keep = (x) => b.subarray(x.start, x.end);
+    const traks = kids(b, moov).filter((k) => k.type === 'trak'), trexes = kids(b, mvex).filter((k) => k.type === 'trex');
+    const mehd = child(b, mvex, 'mehd'), extra = kids(b, moov).filter((k) => !['mvhd', 'trak', 'mvex'].includes(k.type)).map(keep);
+    const idOf = (trak) => { const t = child(b, trak, 'tkhd'); return u32(b, body(t) + (b[body(t)] === 1 ? 20 : 12)) };
+    const handler = (trak) => { const h = child(b, child(b, trak, 'mdia'), 'hdlr'); return h ? String.fromCharCode(...b.subarray(body(h) + 8, body(h) + 12)) : '' };
+    const streams = traks.map((trak) => {
+      const id = idOf(trak), trex = trexes.find((t) => u32(b, body(t) + 4) === id);
+      if (!trex) return null;
+      const parts = [ftyp ? keep(ftyp) : new Uint8Array(0), make('moov', [keep(child(b, moov, 'mvhd')), keep(trak), make('mvex', [...(mehd ? [keep(mehd)] : []), keep(trex)]), ...extra])];
+      let at = parts[0].length + parts[1].length, n = 0;
+      top.forEach((x, i) => {
+        const traf = x.type === 'moof' && top[i + 1]?.type === 'mdat' && child(b, x, 'traf'), tfhd = traf && child(b, traf, 'tfhd');
+        if (!tfhd || u32(b, body(tfhd) + 4) !== id) return;
+        const out = b.slice(x.start, top[i + 1].end), p = body(tfhd) - x.start;
+        if (out[p + 3] & 1) put64(out, p + 8, u64(out, p + 8) - x.start + at);
+        parts.push(out);
+        at += out.length;
+        n++;
+      });
+      return n ? { bytes: concat(parts), kind: handler(trak) } : null;
+    });
+    if (!streams.length || streams.some((s) => !s)) return null;
+    const video = streams.find((s) => s.kind === 'vide'), audio = streams.find((s) => s.kind === 'soun');
+    const out = streams.length === 1 ? clean(streams[0].bytes) : streams.length === 2 && video && audio ? merge(video.bytes, audio.bytes) : null;
+    if (!out || out.length === b.length && out.every((v, i) => v === b[i])) return null;
+    return out;
+  }
+
+  return { merge, clean, repair, fragmented };
 })();
 if (typeof module !== 'undefined') module.exports = LodiMP4;

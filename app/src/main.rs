@@ -14,6 +14,7 @@ mod library;
 mod links;
 mod mp4;
 mod recovery;
+mod thumb;
 
 use drive::Drive;
 use gallery::Gallery;
@@ -502,6 +503,20 @@ fn g_lock_write(gallery: State<Gallery>, request: tauri::ipc::Request<'_>) -> Re
     gallery.write_locked(&header(&request, "path")?, bytes)
 }
 
+/// Puts a repaired video in place of the file. The body is the repaired file, the `path` header the
+/// file it replaces.
+#[tauri::command]
+async fn g_replace(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("body".into()) };
+    let (path, bytes) = (header(&request, "path")?, bytes.clone());
+    tauri::async_runtime::spawn_blocking(move || app.state::<Gallery>().replace(&path, &bytes)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn g_move_dir(app: AppHandle, path: String, dest: String) -> Result<PathBuf, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Gallery>().move_dir(&path, &dest)).await.map_err(|e| e.to_string())?
+}
+
 /// Rewrites a locked file in place under a new password. The body is the file, the `path` header
 /// the locked file.
 #[tauri::command]
@@ -806,7 +821,10 @@ fn on_launch(app: &AppHandle, args: &[String]) {
     } else if args.iter().any(|a| a == "--extension") {
         let _ = setup_extension(app);
     } else if !args.iter().any(|a| a == "--background") {
-        show_panel(app, None, false);
+        // Starting LodiSave from the taskbar, Start or a shortcut opens the gallery; the tray icon
+        // opens the panel. Built off this thread, as a window made here can deadlock.
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move { show_gallery(&app) });
     }
 }
 
@@ -820,6 +838,20 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| on_launch(app, &args)))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--background"])))
         .plugin(tauri_plugin_opener::init())
+        // Gallery thumbnails, for files inside the added folders only.
+        .register_asynchronous_uri_scheme_protocol("thumb", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = thumb::path_of(request.uri().path());
+            let px = request.uri().query().and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("s="))).and_then(|s| s.parse().ok()).unwrap_or(256).clamp(64, 1024);
+            thumb::queue(move || {
+                let got = app.state::<Gallery>().check(&path).ok().and_then(|p| thumb::png(&p, px));
+                let res = match got {
+                    Some(png) => tauri::http::Response::builder().header("Content-Type", "image/png").header("Cache-Control", "max-age=31536000, immutable").body(png),
+                    None => tauri::http::Response::builder().status(404).body(Vec::new()),
+                };
+                responder.respond(res.unwrap());
+            });
+        })
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -944,6 +976,8 @@ fn main() {
             g_lock_write,
             g_lock_drop,
             g_relock,
+            g_replace,
+            g_move_dir,
             recovery_status,
             recovery_begin,
             recovery_finish,

@@ -1,4 +1,10 @@
 fn main() {
+    // The gallery repairs videos with the extension's own MP4 joiner, so one copy is the source.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let joiner = dir.join("../extension/mp4.js");
+    println!("cargo:rerun-if-changed={}", joiner.display());
+    std::fs::copy(&joiner, dir.join("ui/mp4.js")).expect("extension/mp4.js is missing");
+
     // tauri-build would embed its manifest in the app binary only. Test executables need it too
     // (Common Controls v6) or they fail to start, so embed one manifest into every linked target.
     let windows = tauri_build::WindowsAttributes::new_without_app_manifest();

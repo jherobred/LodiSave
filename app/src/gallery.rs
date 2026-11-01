@@ -115,18 +115,17 @@ impl Gallery {
         }
     }
 
-    /// Adds a folder. One inside a folder already added changes nothing; one around folders already
-    /// added takes their place. Returns the folder as it is kept.
+    /// Adds a folder, also one inside or around folders already added: each shows as its own folder,
+    /// and a file under two of them is listed once. Returns the folder as it is kept.
     pub fn add(&self, path: &Path) -> Result<PathBuf, String> {
         let p = real(path).filter(|p| p.is_dir()).ok_or("gone")?;
         if let Some(why) = refused(&p) {
             return Err(why.into());
         }
         let mut roots = self.roots.lock().unwrap();
-        if roots.iter().any(|r| inside(&p, r)) {
+        if roots.iter().any(|r| key(r).eq_ignore_ascii_case(&key(&p))) {
             return Ok(p);
         }
-        roots.retain(|r| !inside(r, &p));
         roots.push(p.clone());
         roots.sort_by_key(|r| r.to_string_lossy().to_lowercase());
         self.keep(&roots);
@@ -163,9 +162,13 @@ impl Gallery {
 
     /// Every photo, GIF, video and sound in the added folders, and the folders that hold them.
     pub fn list(&self) -> (Vec<Entry>, Vec<Folder>) {
+        use std::collections::HashMap;
+        let roots = self.roots();
         let (mut files, mut dirs) = (Vec::new(), Vec::new());
-        for root in self.roots() {
-            walk(&root, 0, &mut files, &mut dirs);
+        // A folder added inside another added one is walked with it, so its files list once.
+        let tops: Vec<&PathBuf> = roots.iter().filter(|r| !roots.iter().any(|o| o != *r && inside(r, o))).collect();
+        for root in &tops {
+            walk(root, 0, &mut files, &mut dirs);
         }
         let blurred: Vec<PathBuf> = dirs.iter().filter(|d| self.store.get(&key(d)).blur).cloned().collect();
         let entries: Vec<Entry> = files
@@ -181,20 +184,29 @@ impl Gallery {
                 Some(Entry { dir, name, kind, bytes: m.len(), modified, fav: meta.fav, blur, tags: meta.tags, path })
             })
             .collect();
-        let roots = self.roots();
+        // Counted once per file and per folder above it, not once per folder over every file.
+        let (mut count, mut total): (HashMap<&Path, usize>, HashMap<&Path, usize>) = (HashMap::new(), HashMap::new());
+        for e in &entries {
+            *count.entry(e.dir.as_path()).or_default() += 1;
+            for d in e.dir.ancestors() {
+                *total.entry(d).or_default() += 1;
+                if tops.iter().any(|t| t.as_path() == d) {
+                    break;
+                }
+            }
+        }
         let mut folders: Vec<Folder> = dirs
-            .into_iter()
+            .iter()
             .map(|d| {
-                let count = entries.iter().filter(|e| e.dir == d).count();
-                let total = entries.iter().filter(|e| inside(&e.dir, &d)).count();
-                let parent = if roots.contains(&d) { None } else { d.parent().map(Path::to_path_buf) };
+                let parent = if tops.contains(&d) { None } else { d.parent().map(Path::to_path_buf) };
                 let name = d.file_name().map_or_else(|| d.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned());
-                let blur = self.store.get(&key(&d)).blur;
-                Folder { path: d, name, parent, blur, count, total }
+                let blur = self.store.get(&key(d)).blur;
+                let (count, total) = (count.get(d.as_path()).copied().unwrap_or(0), total.get(d.as_path()).copied().unwrap_or(0));
+                Folder { path: d.clone(), name, parent, blur, count, total }
             })
             .collect();
         // Folders with nothing to show anywhere under them stay out, but added folders always show.
-        folders.retain(|f| f.total > 0 || f.parent.is_none());
+        folders.retain(|f| f.total > 0 || roots.contains(&f.path));
         (entries, folders)
     }
 
@@ -275,6 +287,41 @@ impl Gallery {
         }
         self.store.rekey(&moves);
         if done.is_empty() && !paths.is_empty() { Err("blocked".into()) } else { Ok(done) }
+    }
+
+    /// Moves a folder into another one on the same drive. Added folders, and folders holding one,
+    /// stay where they are.
+    pub fn move_dir(&self, path: &str, dest: &str) -> Result<PathBuf, String> {
+        let (from, dest) = (self.checked_dir(path)?, self.checked_dir(dest)?);
+        if self.roots().iter().any(|r| inside(r, &from)) {
+            return Err("added".into());
+        }
+        if inside(&dest, &from) {
+            return Err("into".into());
+        }
+        if from.parent() == Some(dest.as_path()) {
+            return Ok(from);
+        }
+        let to = dest.join(from.file_name().ok_or("gone")?);
+        if to.exists() {
+            return Err("taken".into());
+        }
+        std::fs::rename(&from, &to).map_err(|e| if e.raw_os_error() == Some(17) { "drive".to_string() } else { "blocked".to_string() })?;
+        self.store.rekey(&[(key(&from), key(&to))]);
+        Ok(to)
+    }
+
+    /// Puts a repaired copy in place of a file, under the same name. The original goes to the
+    /// Recycle Bin, so a bad repair can be undone there.
+    pub fn replace(&self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        let to = self.checked_file(path)?;
+        let tmp = unique(to.parent().ok_or("gone")?, &crate::drive::random(6), "lodisave-part");
+        std::fs::write(&tmp, bytes).map_err(|_| "blocked".to_string())?;
+        if let Err(e) = library::trash(std::slice::from_ref(&to)) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        std::fs::rename(&tmp, &to).map_err(|_| "blocked".to_string())
     }
 
     /// Writes a locked copy of `original` beside it, under a random name so the name doesn't tell
@@ -447,11 +494,13 @@ mod tests {
         assert_eq!(g.add(&PathBuf::from(std::env::var("USERPROFILE").unwrap())), Err("system".into()));
 
         g.add(&pics).unwrap();
-        g.add(&pics.join("trip")).unwrap(); // already covered
-        assert_eq!(g.roots(), [pics.clone()]);
+        g.add(&pics.join("trip")).unwrap(); // its own folder too, but its files list once
+        assert_eq!(g.roots(), [pics.clone(), pics.join("trip")]);
         let (items, folders) = g.list();
         assert_eq!(items.len(), 2);
         assert_eq!(folders.len(), 2);
+        assert_eq!(folders.iter().find(|f| f.path == pics).map(|f| f.total), Some(2));
+        g.remove(&pics.join("trip").to_string_lossy());
 
         // Paths outside, or reached through .., are refused.
         let out = d.join("outside.jpg").to_string_lossy().into_owned();
@@ -491,6 +540,18 @@ mod tests {
         assert!(back.is_file() && !copy.exists() && g.store.get(&key(&back)).fav);
         assert!(g.write_unlocked(&back.to_string_lossy(), "b.jpg", b"x").is_err());
         assert!(g.mkdir(&pics.to_string_lossy(), "..\\evil").is_err());
+
+        // A repaired file takes the original's place.
+        g.replace(&back.to_string_lossy(), b"fixed").unwrap();
+        assert_eq!(std::fs::read(&back).unwrap(), b"fixed");
+
+        // A folder moves into another and its marks go with it; never into itself.
+        let inner = g.mkdir(&pics.to_string_lossy(), "keep").unwrap();
+        let trip = pics.join("trip").to_string_lossy().into_owned();
+        assert_eq!(g.move_dir(&trip, &trip), Err("into".into()));
+        let moved = g.move_dir(&trip, &inner.to_string_lossy()).unwrap();
+        assert!(moved.is_dir() && g.store.get(&key(&moved)).blur);
+        assert_eq!(g.move_dir(&pics.to_string_lossy(), &inner.to_string_lossy()), Err("added".into()));
         g.remove(&pics.to_string_lossy());
         assert!(g.roots().is_empty());
         let _ = std::fs::remove_dir_all(&d);

@@ -45,7 +45,7 @@ const COPY = {
     cantUndo: 'Couldn\'t undo. It\'s in the Recycle Bin.', movedTo: (a) => `Moved to ${a}`, imageCopied: 'Image copied', filesCopied: (n) => (n === 1 ? 'File copied, paste it anywhere' : `${n} files copied, paste them anywhere`),
     pathCopied: 'Path copied', linkCopied: 'Link copied', savedCopy: 'Saved a copy', renamed: 'Renamed', faved: (n) => (n === 1 ? 'Added to favorites' : `${n} added to favorites`),
     unfaved: 'Removed from favorites', hiddenHome: 'Hidden from home', shownHome: 'Back on home',
-    errBlocked: 'Windows blocked that. Allow LodiSave in Gallery › Folders and settings.', errTaken: 'That name is taken.', errName: 'Windows can\'t use that name.',
+    errBlocked: 'Windows blocked that. Allow LodiSave in Gallery › Settings › Windows permissions.', errTaken: 'That name is taken.', errName: 'Windows can\'t use that name.',
     errGone: 'That file is gone.', errKept: 'Some files stayed in the album folder.',
     type: 'Type', dims: 'Dimensions', size: 'Size', date: 'Saved', album: 'Album', source: 'Source', copyLink: 'Copy link', unknown: 'Not known',
     kind: { image: 'Photo', gif: 'GIF', video: 'Video', audio: 'Audio' },

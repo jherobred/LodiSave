@@ -14,7 +14,7 @@
         "default-src": "'self'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' asset: http://asset.localhost data: blob:",
+        "img-src": "'self' asset: http://asset.localhost thumb: http://thumb.localhost data: blob:",
         "media-src": "'self' asset: http://asset.localhost blob:",
         "connect-src": "ipc: http://ipc.localhost asset: http://asset.localhost",
         "font-src": "'self'",

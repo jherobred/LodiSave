@@ -106,6 +106,25 @@ const probe = (file) => {
       assert.ok(Math.min(...ts) < 0.1 && Math.abs(Math.max(...ts) - seconds) < 0.1, `${name}: ${Math.min(...ts)}..${Math.max(...ts)}`);
     }
   }
+  // A file the old joiner wrote: the clean file with its fragments looped, then its first video
+  // fragment gone so the video starts after the audio. repair() gives back a clean file.
+  const good = MP4.merge(fs.readFileSync(path.join(media, 'av/video.mp4')), fs.readFileSync(path.join(media, 'av/audio.mp4')));
+  assert.equal(MP4.repair(good), null, 'a clean file is left alone');
+  assert.ok(MP4.fragmented(good.subarray(0, 4096)));
+  const top = [];
+  for (let o = 0; o + 8 <= good.length; o += Buffer.from(good.buffer, good.byteOffset + o, 4).readUInt32BE(0)) top.push(Buffer.from(good.subarray(o, o + Buffer.from(good.buffer, good.byteOffset + o, 4).readUInt32BE(0))));
+  const head = top.filter((x) => x.toString('latin1', 4, 8) !== 'moof' && x.toString('latin1', 4, 8) !== 'mdat');
+  const frags = top.flatMap((x, i) => (x.toString('latin1', 4, 8) === 'moof' ? [Buffer.concat([x, top[i + 1]])] : []));
+  const track = (f) => f.readUInt32BE(f.indexOf('tfhd') + 8);
+  const firstVideo = frags.findIndex((f) => track(f) === 1);
+  for (const [name, broken] of [['looped', [...head, ...frags, ...frags]], ['late video', [...head, ...frags.filter((_, i) => i !== firstVideo)]]]) {
+    fs.writeFileSync(mergedFile, MP4.repair(Buffer.concat(broken)));
+    assert.deepEqual(probe(mergedFile), { streams: 'audio+video', clean: true }, `repair ${name}`);
+    for (const ts of Object.values(packets(mergedFile))) {
+      assert.equal(new Set(ts).size, ts.length, `repair ${name}: no repeated frames`);
+      assert.ok(Math.min(...ts) < 0.1, `repair ${name}: starts at ${Math.min(...ts)}`);
+    }
+  }
   fs.rmSync(mergedFile);
   assert.equal(MP4.merge(fs.readFileSync(path.join(media, 'clip.webm')), fs.readFileSync(path.join(media, 'av/audio.mp4'))), null);
   const manifest = JSON.parse(fs.readFileSync(path.join(ext, 'manifest.json'), 'utf8'));

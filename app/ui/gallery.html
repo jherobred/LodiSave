@@ -55,8 +55,9 @@
 
 <div class="app" id="app">
   <aside class="side" id="side">
+    <!-- The window's title, top left as in any Windows app: the mark and the name, in the strip. -->
     <div class="side-top" data-tauri-drag-region>
-      <span class="brand" data-tauri-drag-region><img src="lodi.svg" alt="" width="28" height="28"><span data-tauri-drag-region>LodiSave <em>Gallery</em></span></span>
+      <span class="brand" data-tauri-drag-region><img src="lodi.svg" alt="" width="20" height="20" data-tauri-drag-region><span data-tauri-drag-region>LodiSave <em data-tauri-drag-region>Gallery</em></span></span>
       <button type="button" class="icon" id="toggle-side" title="Collapse the sidebar ([)"><svg class="i" aria-hidden="true"><use href="#i-left"/></svg></button>
     </div>
     <nav class="nav" id="nav">
@@ -76,7 +77,7 @@
     <h3 id="tags-head" class="tree-head" hidden><span>Tags</span></h3>
     <div class="tags" id="tags"></div>
     <span class="grow"></span>
-    <button type="button" class="side-foot" id="open-settings" title="Folders and settings"><svg class="i" aria-hidden="true"><use href="#i-prefs"/></svg><span>Folders and settings</span></button>
+    <button type="button" class="side-foot" id="open-settings" title="Settings"><svg class="i" aria-hidden="true"><use href="#i-prefs"/></svg><span>Settings</span></button>
   </aside>
 
   <main class="main">
@@ -160,6 +161,19 @@
   <form method="dialog" id="sheet-body"></form>
 </dialog>
 
+<dialog class="prefs" id="prefs" aria-labelledby="prefs-title">
+  <header class="prefs-head"><h2 id="prefs-title">Settings</h2><button type="button" class="icon" id="prefs-close" title="Close (Esc)"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+  <div class="prefs-body">
+    <nav class="prefs-nav">
+      <label class="psearch"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><input id="prefs-q" type="search" placeholder="Search" spellcheck="false"></label>
+      <h5>Gallery</h5>
+      <div id="prefs-nav-list"></div>
+    </nav>
+    <div class="prefs-page" id="prefs-page" tabindex="-1" autofocus></div>
+  </div>
+</dialog>
+
 <div class="toast" id="toast" hidden><span id="toast-text"></span><button type="button" id="toast-undo">Undo</button></div>
 
+<script src="mp4.js"></script>
 <script src="gallery.js"></script>
