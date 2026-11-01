@@ -14,3 +14,7 @@ __pycache__/
 android/**/build/
 android/local.properties
 .kotlin/
+
+# Design tool working files (screenshots, preview harness, photos)
+.taste-skill/
+.hallmark/

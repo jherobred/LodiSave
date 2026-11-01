@@ -5,13 +5,20 @@
 
 mod accounts;
 mod clip;
+mod defender;
+mod drive;
+mod gallery;
 mod game;
 mod host;
 mod library;
 mod links;
 mod mp4;
+mod recovery;
 
+use drive::Drive;
+use gallery::Gallery;
 use library::Store;
+use recovery::Recovery;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -54,10 +61,11 @@ pub fn writable(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Paths the panel hands back must stay inside the save folder.
+/// Paths the panel and the gallery hand back must stay inside the save folder or a folder added to
+/// the gallery.
 fn inside(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
     let dir = save_dir(app);
-    library::within(&dir, path).map(|rel| library::at(&dir, &rel))
+    library::within(&dir, path).map(|rel| library::at(&dir, &rel)).or_else(|e| app.state::<Gallery>().check(path).map_err(|_| e))
 }
 
 /// Several paths from the panel, as paths in the save folder, checked by `inside`'s rule.
@@ -368,6 +376,259 @@ async fn sign_out(app: AppHandle, site: String) -> Result<(), String> {
 }
 
 /// Gaming mode Auto or Off, from the panel's settings.
+/// Opens the gallery window, or brings it forward. Commands that call this are async: a window
+/// made in a sync command deadlocks on Windows.
+fn show_gallery(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("gallery") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let _ = WebviewWindowBuilder::new(app, "gallery", WebviewUrl::App("gallery.html".into()))
+        .title("LodiSave Gallery")
+        .inner_size(1240.0, 820.0)
+        .min_inner_size(820.0, 520.0)
+        // The page draws its own title bar and window buttons.
+        .decorations(false)
+        .shadow(true)
+        .build();
+}
+
+#[tauri::command]
+async fn open_gallery(app: AppHandle) {
+    close_panel(&app);
+    show_gallery(&app);
+}
+
+#[derive(Serialize)]
+struct GalleryList {
+    roots: Vec<PathBuf>,
+    items: Vec<gallery::Entry>,
+    folders: Vec<gallery::Folder>,
+    saves: PathBuf,
+    backed: Vec<String>,
+    ffmpeg: bool,
+}
+
+#[tauri::command]
+async fn gallery(app: AppHandle) -> Result<GalleryList, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let g = app.state::<Gallery>();
+        let (items, folders) = g.list();
+        GalleryList { roots: g.roots(), items, folders, saves: save_dir(&app), backed: app.state::<Drive>().backed(), ffmpeg: library::ffmpeg() }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Adds a folder to the gallery: `path`, or one picked in the Windows folder picker when it is
+/// None. Ok(None) when the picker was closed.
+#[tauri::command]
+async fn gallery_add(app: AppHandle, path: Option<String>) -> Result<Option<PathBuf>, String> {
+    let owner = app.get_webview_window("gallery").and_then(|w| w.hwnd().ok()).map_or(0, |h| h.0 as isize);
+    let picked = tauri::async_runtime::spawn_blocking(move || match path {
+        Some(p) => Some(PathBuf::from(p)),
+        None => {
+            let _ = unsafe { windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) };
+            host::pick_folder(owner, "Add a folder to the LodiSave gallery", Path::new(""))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(picked) = picked else { return Ok(None) };
+    let root = app.state::<Gallery>().add(&picked)?;
+    let _ = app.asset_protocol_scope().allow_directory(&root, true);
+    Ok(Some(root))
+}
+
+/// Takes a folder out of the gallery. Its files stay where they are.
+#[tauri::command]
+fn gallery_remove(app: AppHandle, path: String) {
+    // ponytail: the window can still load this folder's files until LodiSave restarts, since the
+    // asset scope can only add or forbid, and forbidding would block the folder if it is added again.
+    app.state::<Gallery>().remove(&path);
+}
+
+#[tauri::command]
+fn g_mark(gallery: State<Gallery>, paths: Vec<String>, what: String, on: bool) -> Result<(), String> {
+    gallery.mark(&paths, &what, on)
+}
+
+#[tauri::command]
+fn g_tag(gallery: State<Gallery>, paths: Vec<String>, add: Vec<String>, drop: Vec<String>) -> Result<(), String> {
+    gallery.tag(&paths, &add, &drop)
+}
+
+#[tauri::command]
+fn g_rename(gallery: State<Gallery>, path: String, name: String) -> Result<PathBuf, String> {
+    gallery.rename(&path, &name)
+}
+
+#[tauri::command]
+async fn g_place(app: AppHandle, paths: Vec<String>, dest: String, copy: bool) -> Result<Vec<PathBuf>, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Gallery>().place(&paths, &dest, copy)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn g_mkdir(gallery: State<Gallery>, parent: String, name: String) -> Result<PathBuf, String> {
+    gallery.mkdir(&parent, &name)
+}
+
+#[tauri::command]
+async fn g_trash(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Gallery>().trash(&paths)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn g_restore(app: AppHandle, paths: Vec<String>) -> Result<Vec<PathBuf>, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Gallery>().restore(&paths)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn g_duplicates(app: AppHandle, paths: Vec<String>) -> Result<Vec<Vec<PathBuf>>, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Gallery>().duplicates(&paths)).await.map_err(|e| e.to_string())
+}
+
+/// A raw-body command's header, sent as a JSON string so any file name survives.
+fn header(request: &tauri::ipc::Request<'_>, k: &str) -> Result<String, String> {
+    serde_json::from_str(request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("")).map_err(|_| k.to_string())
+}
+
+/// Writes the locked copy the window encrypted. The body is the copy, the `path` header the original.
+#[tauri::command]
+fn g_lock_write(gallery: State<Gallery>, request: tauri::ipc::Request<'_>) -> Result<PathBuf, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("body".into()) };
+    gallery.write_locked(&header(&request, "path")?, bytes)
+}
+
+/// Rewrites a locked file in place under a new password. The body is the file, the `path` header
+/// the locked file.
+#[tauri::command]
+fn g_relock(gallery: State<Gallery>, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("body".into()) };
+    gallery.relock(&header(&request, "path")?, bytes)
+}
+
+#[tauri::command]
+fn recovery_status(recovery: State<Recovery>) -> bool {
+    recovery.is_set()
+}
+
+#[tauri::command]
+fn recovery_begin(recovery: State<Recovery>) -> Result<recovery::Setup, String> {
+    recovery.begin()
+}
+
+#[tauri::command]
+fn recovery_finish(recovery: State<Recovery>, code: String, public: Vec<u8>, private: Vec<u8>) -> Result<(), String> {
+    recovery.finish(&code, &public, &private)
+}
+
+#[tauri::command]
+fn recovery_public(recovery: State<Recovery>) -> Option<Vec<u8>> {
+    recovery.public()
+}
+
+#[tauri::command]
+fn recovery_unlock(recovery: State<Recovery>, code: String) -> Result<Vec<u8>, String> {
+    recovery.unlock(&code)
+}
+
+#[tauri::command]
+fn recovery_off(recovery: State<Recovery>, code: String) -> Result<(), String> {
+    recovery.turn_off(&code)
+}
+
+#[tauri::command]
+fn g_lock_drop(gallery: State<Gallery>, original: String, copy: String) -> Result<(), String> {
+    gallery.drop_original(&original, &copy)
+}
+
+/// Writes a file the window unlocked for good. The body is the file, the `path` header the locked
+/// copy and `name` the file's own name.
+#[tauri::command]
+fn g_unlock_write(gallery: State<Gallery>, request: tauri::ipc::Request<'_>) -> Result<PathBuf, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("body".into()) };
+    gallery.write_unlocked(&header(&request, "path")?, &header(&request, "name")?, bytes)
+}
+
+#[derive(Serialize)]
+struct Permissions {
+    protection: &'static str,
+    saves: bool,
+    pictures: bool,
+}
+
+/// Controlled folder access, and whether Windows lets LodiSave write where it saves and into
+/// Pictures, a folder it always protects.
+#[tauri::command]
+async fn permissions(app: AppHandle) -> Result<Permissions, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let pictures = app.path().picture_dir().is_ok_and(|p| p.is_dir() && writable(&p).is_ok());
+        Permissions { protection: defender::state(), saves: writable(&save_dir(&app)).is_ok(), pictures }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Asks Windows, through its admin prompt, to let LodiSave write to protected folders.
+#[tauri::command]
+async fn allow_protected() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(defender::allow).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn g_wallpaper(app: AppHandle, path: String) -> Result<(), String> {
+    gallery::wallpaper(&inside(&app, &path)?)
+}
+
+/// What the backup may cover: every file the gallery and the library list.
+fn candidates(app: &AppHandle) -> Vec<drive::Candidate> {
+    let (saves, _) = library::list(&save_dir(app), &app.state::<Store>());
+    let (shown, _) = app.state::<Gallery>().list();
+    let as_json = saves.iter().filter_map(|i| serde_json::to_value(i).ok()).chain(shown.iter().filter_map(|i| serde_json::to_value(i).ok()));
+    as_json
+        .filter_map(|v| {
+            let kind = if v["kind"].as_str()? == "audio" { "audio" } else { "media" };
+            Some(drive::Candidate { path: PathBuf::from(v["path"].as_str()?), kind, modified_ms: v["modified"].as_u64().unwrap_or(0) })
+        })
+        .collect()
+}
+
+fn back_up(app: &AppHandle) -> Result<usize, String> {
+    let list = candidates(app);
+    app.state::<Drive>().run(app, &list)
+}
+
+#[tauri::command]
+fn drive_status(drive: State<Drive>) -> drive::Status {
+    drive.status()
+}
+
+#[tauri::command]
+async fn drive_connect(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Drive>().connect(&app)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn drive_disconnect(app: AppHandle) {
+    std::thread::spawn(move || app.state::<Drive>().disconnect());
+}
+
+#[tauri::command]
+fn drive_rules(drive: State<Drive>, rules: drive::Rules) {
+    drive.set_rules(rules);
+}
+
+/// Backs up what is waiting and what the rule covers, after adding `paths` to what is waiting.
+#[tauri::command]
+async fn drive_backup(app: AppHandle, paths: Vec<String>) -> Result<usize, String> {
+    let files = paths.iter().map(|p| inside(&app, p)).collect::<Result<Vec<_>, _>>()?;
+    app.state::<Drive>().queue(files);
+    tauri::async_runtime::spawn_blocking(move || back_up(&app)).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn set_gaming(auto: bool) {
     game::set_auto(auto);
@@ -511,9 +772,10 @@ fn hide(app: AppHandle) {
 
 fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open LodiSave", true, None::<&str>)?;
+    let gallery = MenuItem::with_id(app, "gallery", "Gallery", true, None::<&str>)?;
     let capture = MenuItem::with_id(app, "capture", "Capture area", true, Some("Ctrl+Alt+L"))?;
     let quit = MenuItem::with_id(app, "quit", "Quit LodiSave", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &capture, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &gallery, &capture, &PredefinedMenuItem::separator(app)?, &quit])?;
     TrayIconBuilder::with_id("main")
         .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
         .tooltip("LodiSave")
@@ -521,6 +783,7 @@ fn create_tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_panel(app, None, false),
+            "gallery" => show_gallery(app),
             "capture" => start_capture(app),
             "quit" => app.exit(0),
             _ => {}
@@ -577,6 +840,24 @@ fn main() {
             let store = Store::open(handle.path().app_local_data_dir()?.join("library.json"));
             store.prune(&save_dir(&handle));
             app.manage(store);
+            let data = handle.path().app_local_data_dir()?;
+            let gallery = Gallery::open(&data);
+            for root in gallery.roots() {
+                let _ = app.asset_protocol_scope().allow_directory(&root, true);
+            }
+            app.manage(gallery);
+            app.manage(Drive::open(&data));
+            app.manage(Recovery::open(&data));
+            // The daily backup, while a rule or freeing space is on, once a game is over.
+            let backup = handle.clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_secs(600));
+                    if !game::on() && backup.state::<Drive>().due() {
+                        let _ = back_up(&backup);
+                    }
+                }
+            });
             accounts::sweep(&handle);
             // Each start, so a moved or portable copy is the one browsers start.
             let _ = host::register(&handle.path().app_local_data_dir()?);
@@ -647,6 +928,36 @@ fn main() {
             sign_in,
             sign_out,
             set_gaming,
+            open_gallery,
+            gallery,
+            gallery_add,
+            gallery_remove,
+            g_mark,
+            g_tag,
+            g_rename,
+            g_place,
+            g_mkdir,
+            g_trash,
+            g_restore,
+            g_duplicates,
+            g_wallpaper,
+            g_lock_write,
+            g_lock_drop,
+            g_relock,
+            recovery_status,
+            recovery_begin,
+            recovery_finish,
+            recovery_public,
+            recovery_unlock,
+            recovery_off,
+            g_unlock_write,
+            permissions,
+            allow_protected,
+            drive_status,
+            drive_connect,
+            drive_disconnect,
+            drive_rules,
+            drive_backup,
             open_path,
             reveal,
             open_folder,

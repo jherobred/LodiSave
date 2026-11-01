@@ -1,0 +1,362 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand (LodiSave Kape) · redesign: restyle
+ * paper: oklch(97.3% 0.003 75) · accent: oklch(52% 0.15 45) · display: Geist · body: Geist
+ * nav: kept (labelled sidebar, folds to an icon rail under 980px) · signature: Saved from, the saves sorted by the app and the person they came from · states: empty, loading, locked, error
+ * axes: light/grotesk-sans/warm · posture: tool · contrast: pass · v2.0.0 */
+/* Hallmark · waive 24b · app/ui/app.css uses the same 6/10/14/18 px steps · kept so the gallery and the tray panel share one LodiSave kit */
+/* Hallmark · answered F7: .search and .seg are controls; .selbar and .toast are floating bars of controls, so they keep the control radius */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, the shell is the standard three-pane media browser; the product's own Saved from list and the to-do overview carry it instead */
+
+@font-face { font-family: Geist; src: url(fonts/Geist.woff2) format('woff2'); font-weight: 100 900; font-display: block }
+@font-face { font-family: 'Geist Mono'; src: url(fonts/GeistMono.woff2) format('woff2'); font-weight: 100 900; font-display: block }
+
+/* The tray panel's Kape tokens. Every colour and face below goes through these. */
+:root {
+  color-scheme: light;
+  --font-body: Geist, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, monospace;
+  --bg: #F7F6F4; --surface: #FFFFFF; --soft: #EFEEEB; --soft-2: #E5E3DF; --line: #E3E1DD; --ink: #151413; --muted: #66645F;
+  --accent: #B84C0C; --accent-ink: #FFFFFF; --pick: #C98E52; --ok: #1A7F4B; --bad: #C2362B;
+  --shadow: 0 10px 30px rgba(0, 0, 0, .18);
+  --night: #0F0F10; --night-2: #1E1E21; --night-ink: #F4F3F1; --night-muted: #A3A19C; --crema: #FF8A3D;
+  /* On top of photographs, in both themes. */
+  --on-media: #FFFFFF; --scrim: rgba(15, 15, 16, .62); --scrim-soft: rgba(15, 15, 16, .25); --scrim-top: rgba(15, 15, 16, .85);
+  --backdrop: rgba(15, 15, 16, .45); --close: #C42B1C; --wash: rgba(127, 127, 127, .22); --flip-bad: #FF8A7E;
+  /* Springs from the design kit: Float k200 c15, Drift k140 c17, Snap k900 c56. */
+  --float: linear(0,0.034,0.119,0.236,0.373,0.515,0.649,0.774,0.883,0.969,1.038,1.088,1.119,1.135,1.139,1.134,1.121,1.104,1.086,1.066,1.047,1.03,1.015,1.003,0.994,0.987,0.983,0.981,0.981,0.982,0.983,0.986,0.988,0.991,0.994,1);
+  --drift: linear(0,0.021,0.073,0.146,0.232,0.324,0.417,0.508,0.594,0.672,0.745,0.806,0.859,0.903,0.94,0.969,0.992,1.009,1.022,1.031,1.036,1.038,1.038,1.037,1.035,1.032,1.029,1.025,1.021,1.018,1.015,1.012,1.009,1.007,1.005,1.003,1);
+  --snap: linear(0,0.058,0.182,0.32,0.459,0.582,0.681,0.764,0.829,0.876,0.913,0.94,0.959,0.972,0.982,0.988,0.993,1);
+  /* One radius per level: rows and controls, tiles, panels. Pills stay round, as in the panel. */
+  --r-row: 10px; --r-tile: 12px; --r-panel: 18px; --r-pill: 999px;
+  --tile: 180px;
+  --left: 256px; --right: 336px;
+  /* The top strip: 40 px of air where the window buttons sit, then the header row under it. */
+  --strip: 40px; --top: calc(var(--strip) + 56px);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #111113; --surface: #18181A; --soft: #222225; --soft-2: #2C2C30; --line: #2C2C2F; --ink: #F4F3F1; --muted: #A3A19C;
+    --accent: #FF8A3D; --accent-ink: #0F0F10; --pick: #E8B37A; --ok: #3DD68C; --bad: #FF6B5E;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .6);
+  }
+}
+
+* { box-sizing: border-box }
+/* The window is the frame: nothing scrolls but the panes inside it. */
+html, body { margin: 0; height: 100%; overflow: clip; background: var(--bg) }
+body { color: var(--ink); font: 400 14px/1.45 var(--font-body); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; user-select: none }
+button, input, select { font: inherit; color: inherit }
+button { cursor: pointer; border: 0; background: none }
+button:disabled { cursor: not-allowed; color: var(--muted); background-color: var(--soft); opacity: .6 }
+.icon:disabled, .act:disabled { background-color: transparent }
+:focus-visible { outline: 3px solid var(--pick); outline-offset: 2px; transition: none }
+[hidden] { display: none !important }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden }
+.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round }
+.grow { flex: 1 }
+.still *, .still *::before, .still *::after { animation: none !important; transition: none !important }
+/* Facts that belong together sit side by side with space between, not joined by dots. */
+.meta { display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 2px }
+.meta > span { white-space: nowrap }
+
+/* Window buttons, over the top-right corner of whatever is under them, the viewer included. */
+.caption { position: fixed; top: 0; right: 0; z-index: 40; display: flex; height: 40px }
+.caption button { width: 46px; height: 40px; display: grid; place-items: center; color: var(--muted); transition: background-color .12s }
+.caption button .i { width: 16px; height: 16px; stroke-width: 1.5 }
+.caption button:hover { background: var(--soft); color: var(--ink) }
+.caption .x:hover, .viewing .caption .x:hover { background: var(--close); color: var(--on-media) }
+.viewing .caption button { color: var(--night-muted) }
+.viewing .caption button:hover { background: var(--night-2); color: var(--night-ink) }
+
+/* Three columns. The side panels shrink to icon rails, and the grid between slides with them. */
+.app { display: grid; grid-template-columns: var(--left) minmax(0, 1fr) var(--right); height: 100% }
+.side { view-transition-name: side }
+.main { view-transition-name: main }
+.peek { view-transition-name: peek }
+::view-transition-group(side), ::view-transition-group(main), ::view-transition-group(peek) { animation-duration: .45s; animation-timing-function: var(--drift) }
+.app.side-shut { --left: 64px }
+.app.peek-shut { --right: 60px }
+.icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: var(--r-row); flex: none; color: var(--muted); transition: background-color .15s, color .15s, transform .2s var(--snap) }
+.icon:hover { background: var(--soft); color: var(--ink) }
+.icon:active, .pill:active, .chips button:active, .act:active { transform: scale(.96) }
+
+/* Sidebar: on the page's own surface, the current view a neutral step darker, never the accent. */
+.side { display: flex; flex-direction: column; gap: 2px; padding: 0 10px 12px; border-right: 1px solid var(--line); background: var(--surface); overflow: hidden auto; min-height: 0; min-width: 0 }
+.side-top { display: flex; align-items: center; gap: 4px; height: var(--top); padding: var(--strip) 0 0 8px; flex: none }
+.brand { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; overflow: hidden }
+.brand img { width: 28px; height: 28px; flex: none }
+.brand span { font-size: 16px; font-weight: 600; letter-spacing: -.01em }
+.brand em { font-style: normal; font-weight: 400; color: var(--muted) }
+.side h3 { display: flex; align-items: center; justify-content: space-between; height: 28px; margin: 18px 10px 2px 12px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap }
+.nav { display: flex; flex-direction: column; gap: 1px }
+.nav button, .folders .row, .side-foot, .tags button {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 6px 10px; border-radius: var(--r-row); text-align: left; white-space: nowrap;
+  transition: background-color .15s var(--snap), color .15s;
+}
+.nav button:hover, .folders .row:hover, .side-foot:hover, .tags button:hover { background: var(--soft) }
+.nav button.on, .folders .row.on, .tags button.on { background: var(--soft-2); font-weight: 500 }
+.nav .i, .folders .i { color: var(--muted) }
+.nav button.on .i, .folders .row.on .i { color: var(--ink) }
+.nav span, .row .name, .side-foot span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.row em { font-size: 12px; font-style: normal; color: var(--muted) }
+.mini { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 8px; color: var(--muted) }
+.mini:hover { background: var(--soft); color: var(--ink) }
+.mini .i { width: 15px; height: 15px }
+.folders .row { padding-left: calc(10px + var(--depth, 0) * 14px); gap: 6px }
+.row .twist { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); flex: none }
+.row .twist .i { width: 14px; height: 14px; transition: transform .25s var(--snap) }
+.row .twist.shut .i { transform: rotate(-90deg) }
+.row .twist.none { visibility: hidden }
+.row .pin { opacity: 0; color: var(--muted); transition: opacity .15s }
+.row:hover .pin, .row .pin.on { opacity: 1 }
+.row .pin.on .i { fill: currentColor }
+.row.drop { background: var(--soft-2); outline: 2px dashed var(--accent); outline-offset: -2px }
+.tree .row { animation: rise-in .3s var(--snap) both }
+.row .marks { display: flex; gap: 3px; color: var(--muted) }
+.row .marks .i { width: 13px; height: 13px }
+/* Saved from: the app as a two-letter mark, so Instagram and X read apart at a glance. */
+.row .app-mark { width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 6px; background: var(--soft); font-size: 10.5px; font-weight: 600; color: var(--muted) }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 6px 0 10px }
+.tags button { width: auto; min-height: 28px; padding: 3px 10px; gap: 6px; border-radius: var(--r-pill); background: var(--soft); font-size: 12.5px }
+.tags button em { font-style: normal; color: var(--muted) }
+.side-foot { margin-top: 10px; color: var(--muted) }
+#lock-now span { color: var(--ink) }
+/* Shut, the sidebar keeps its icons: views, pinned folders and settings. */
+.side-shut .side { padding: 0 10px 12px }
+.side-shut .brand span, .side-shut .nav span, .side-shut .side-foot span, .side-shut .row .name, .side-shut .row em, .side-shut .row .pin, .side-shut .row .marks { display: none }
+.side-shut .side-top { padding: var(--strip) 0 0; flex-direction: column; justify-content: center; height: auto; gap: 8px; margin-bottom: 8px }
+.side-shut .brand { flex: none }
+.side-shut .nav button, .side-shut .side-foot, .side-shut .folders .row { justify-content: center; padding: 6px 0 }
+.side-shut .side h3 { justify-content: center; margin: 12px 0 2px }
+.side-shut .side h3 span, .side-shut .tree, .side-shut .tree-head, .side-shut .tags, .side-shut #from { display: none }
+.side-shut .side h3::before { content: ''; width: 24px; border-top: 1px solid var(--line) }
+
+/* Main */
+.main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; container-type: inline-size }
+/* With both panels open the grid column is narrow: the slider goes first (Ctrl + wheel still
+   sizes tiles), then the sort menu, so the tools stay on one line. */
+@container (max-width: 760px) { #zoom { display: none } .tools .chips button { padding: 0 10px } }
+@container (max-width: 620px) { #sort { display: none } }
+.bar { display: flex; align-items: center; gap: 14px; height: var(--top); padding: var(--strip) 16px 0 24px; flex: none }
+.title { flex: 1; min-width: 0 }
+h1 { margin: 0; text-wrap: balance; font-size: 22px; font-weight: 600; letter-spacing: -.015em; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: break-word; min-width: 0 }
+h1.swap { animation: rise-in .4s var(--drift) }
+#sub { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; overflow: hidden; flex-wrap: nowrap }
+#sub span:first-child { overflow: hidden; text-overflow: ellipsis }
+.search { display: flex; align-items: center; gap: 8px; width: min(340px, 34vw); height: 36px; padding: 0 12px; border-radius: var(--r-pill); background: var(--surface); border: 1px solid var(--line); color: var(--muted); transition: border-color .15s }
+.search:focus-within { border-color: var(--ink) }
+.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--ink) }
+.tools { display: flex; align-items: center; gap: 8px; padding: 10px 16px 14px 24px }
+.chips { display: flex; gap: 6px; min-width: 0; overflow: hidden }
+.chips button { height: 30px; padding: 0 14px; border-radius: var(--r-pill); background: var(--surface); border: 1px solid var(--line); font-size: 13px; transition: background-color .2s var(--snap), color .2s, border-color .2s, transform .2s var(--snap) }
+.chips button:hover { border-color: var(--muted) }
+.chips button.on { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted) }
+select { height: 30px; padding: 0 10px; border-radius: var(--r-row); border: 1px solid var(--line); background: var(--surface) }
+input[type=range] { width: 110px; accent-color: var(--ink) }
+.tools select, .tools .icon { flex: none }
+
+.scroll { flex: 1; overflow-y: auto; padding: 0 16px 90px 24px; min-height: 0; scrollbar-gutter: stable }
+.group { margin: 16px 2px 8px; font-size: 13px; font-weight: 600; display: flex; gap: 10px; align-items: baseline }
+.group button { font-size: 12.5px; font-weight: 400; color: var(--muted) }
+.group button:hover { color: var(--ink); text-decoration: underline }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--tile), 100%), 1fr)); gap: 6px }
+.tile {
+  position: relative; aspect-ratio: 1; border-radius: var(--r-tile); overflow: hidden; background: var(--soft); cursor: pointer; min-width: 0;
+  animation: tile-in .45s var(--drift) both; animation-delay: calc(var(--k, 0) * 14ms);
+}
+@keyframes tile-in { from { opacity: 0; transform: translateY(10px) scale(.97) } }
+.tile img, .tile video { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .25s, opacity .3s }
+.js .tile img:not(.ready) { opacity: 0 }
+.tile:hover { outline: 2px solid var(--soft-2); outline-offset: -2px }
+.tile.veil img, .tile.veil video { filter: blur(18px) saturate(.8) }
+/* Pinterest: 2 px rows, each tile spanning as many as its picture is tall at the column width. */
+.tiles.masonry { grid-auto-rows: 2px; row-gap: 0; grid-auto-flow: row dense }
+.tiles.masonry .tile { aspect-ratio: auto; grid-row-end: span var(--rows, 90); margin-bottom: 6px }
+.tile .glyph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted) }
+.tile .glyph .i { width: 30px; height: 30px; stroke-width: 1.5 }
+.tile .badges { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 4px; pointer-events: none }
+.tile .badges span { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: var(--r-pill); background: var(--scrim); color: var(--on-media); font-size: 11.5px; font-weight: 500 }
+.tile .badges .i { width: 12px; height: 12px; stroke-width: 2 }
+.tile .tick { position: absolute; top: 8px; left: 8px; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--on-media); background: var(--scrim-soft); display: grid; place-items: center; transition: opacity .15s, transform .2s var(--snap), background-color .15s }
+.tile .tick .i { width: 14px; height: 14px; color: var(--on-media); stroke-width: 2.5 }
+/* The tick shows on hover once the script runs; without it every tick stays visible. */
+.js .tile .tick { opacity: 0; transform: scale(.8) }
+.js .tile .tick .i { opacity: 0 }
+.js .tile:hover .tick, .js .picking .tile .tick { opacity: 1; transform: none }
+.tile.sel { outline: 3px solid var(--accent); outline-offset: -3px }
+.js .tile.sel .tick { opacity: 1; transform: none; background: var(--accent); border-color: var(--accent) }
+.js .tile.sel .tick .i { opacity: 1 }
+.tile .heart { position: absolute; top: 9px; right: 9px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--scrim); color: var(--on-media) }
+.tile .heart .i { fill: currentColor; width: 13px; height: 13px }
+.empty { margin: 80px auto; max-width: 440px; text-align: center; color: var(--muted); animation: rise-in .5s var(--drift) }
+.empty h2 { color: var(--ink); font-size: 18px; margin: 0 0 6px }
+.empty .row-btns { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px }
+@keyframes rise-in { from { opacity: 0; transform: translateY(8px) } }
+
+.pill { height: 36px; padding: 0 16px; border-radius: var(--r-pill); background: var(--soft); font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: background-color .15s, transform .2s var(--snap) }
+.pill:hover { background: var(--soft-2) }
+.pill.primary { background: var(--accent); color: var(--accent-ink) }
+.pill.primary:hover { background: var(--accent); filter: brightness(1.06) }
+.pill.bad { color: var(--bad) }
+
+.selbar {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 6px 8px 6px 18px;
+  border-radius: var(--r-pill); background: var(--ink); color: var(--bg); box-shadow: var(--shadow); max-width: calc(100% - 40px); overflow: hidden; animation: bar-in .45s var(--float);
+}
+@keyframes bar-in { from { opacity: 0; transform: translate(-50%, 16px) scale(.96) } }
+.selbar strong { margin-right: 8px; white-space: nowrap; font-weight: 600 }
+.selbar button { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: var(--r-pill); white-space: nowrap; font-size: 13px }
+.selbar button:hover { background: var(--wash) }
+.selbar .bad { color: var(--flip-bad) }
+.selbar .icon { width: 34px; padding: 0; color: inherit }
+@media (max-width: 1420px) { .selbar button span { display: none } .selbar button[data-act] { padding: 0 10px } }
+
+/* Preview panel: the selected file, its facts, then what can be done with it. */
+.peek { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--surface); overflow: hidden }
+.peek-top { display: flex; align-items: center; gap: 6px; height: var(--top); padding: var(--strip) 12px 0; flex: none }
+.peek-label { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden }
+.peek-body { flex: 1; overflow-y: auto; padding: 4px 16px 24px; display: flex; flex-direction: column; gap: 16px; min-width: 300px; animation: peek-in .35s var(--drift) }
+@keyframes peek-in { from { opacity: 0; transform: translateX(10px) } }
+.peek-rail { display: none; flex-direction: column; align-items: center; gap: 4px; padding-top: 8px }
+.peek-shut .peek-top { padding: var(--strip) 0 0; justify-content: center }
+.peek-shut .peek-label, .peek-shut .peek-body { display: none }
+.peek-shut .peek-rail { display: flex }
+.peek-rail hr { width: 24px; border: 0; border-top: 1px solid var(--line); margin: 4px 0 }
+.pv { position: relative; border-radius: var(--r-panel); overflow: hidden; background: var(--soft); display: grid; place-items: center; min-height: 160px; max-height: 340px; animation: pop .4s var(--float) }
+.pv img, .pv video { width: 100%; max-height: 340px; object-fit: contain; display: block; cursor: zoom-in }
+.pv .glyph { padding: 40px 20px 24px; display: grid; gap: 12px; justify-items: center; text-align: center; color: var(--muted); width: 100% }
+.pv .glyph .i { width: 36px; height: 36px; stroke-width: 1.5 }
+.pv audio { width: calc(100% - 24px) }
+.pv.veil img, .pv.veil video { filter: blur(22px) }
+.stack { position: relative; height: 170px; display: grid; place-items: center }
+.stack img, .stack .ph { position: absolute; width: 130px; height: 130px; object-fit: cover; border-radius: var(--r-tile); border: 3px solid var(--surface); box-shadow: var(--shadow); background: var(--soft); animation: fan .5s var(--float) both }
+@keyframes fan { from { transform: rotate(0) translate(0) } }
+.pname { margin: 0; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; line-height: 1.3 }
+.psub { margin: -10px 0 0; color: var(--muted); font-size: 13px }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 0; font-size: 13px }
+.facts dt { color: var(--muted) }
+.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere }
+.facts dd button { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; text-align: left; padding: 0 }
+.facts dd button:hover { text-decoration-color: var(--ink) }
+.facts .ok { color: var(--ok) }
+.peek h4 { margin: 4px 0 -8px; font-size: 12.5px; font-weight: 500; color: var(--muted) }
+/* The three things done most, as buttons; the rest as a plain list, no boxes. */
+.mainacts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px }
+.mainacts .pill:first-child { grid-column: 1 / -1 }
+.acts { display: flex; flex-direction: column; margin: 0 -8px }
+.act { display: flex; align-items: center; gap: 12px; min-height: 36px; padding: 0 8px; border-radius: var(--r-row); text-align: left; transition: background-color .15s, transform .2s var(--snap) }
+.act:hover { background: var(--soft) }
+.act .i { color: var(--muted) }
+.act kbd { margin-left: auto; font: inherit; font-size: 12px; color: var(--muted) }
+.act.on .i { fill: var(--accent); stroke: var(--accent) }
+.act.bad, .act.bad .i { color: var(--bad) }
+.act + .act.bad { margin-top: 6px }
+/* Overview: what needs doing, each with its one action. */
+.todo { display: flex; flex-direction: column; gap: 6px }
+.todo div { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 14px; border-radius: var(--r-row); background: var(--bg) }
+.todo p { margin: 0; flex: 1; font-size: 13px; line-height: 1.4 }
+.todo p b { display: block; font-weight: 600; font-size: 14px }
+.todo .pill { height: 32px; padding: 0 14px; font-size: 13px; background: var(--surface); border: 1px solid var(--line) }
+.keys { font-size: 13px }
+.keys summary { cursor: pointer; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 6px }
+.keys summary::-webkit-details-marker { display: none }
+.keys summary .i { width: 14px; height: 14px; transition: transform .2s var(--snap) }
+.keys:not([open]) summary .i { transform: rotate(-90deg) }
+.keys dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 10px 0 0 }
+.keys dt { color: var(--ink); white-space: nowrap }
+.keys dd { margin: 0; color: var(--muted) }
+kbd { font: inherit; font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--soft) }
+
+/* Viewer, graphite in both themes so photos sit on dark. */
+.viewer { position: fixed; inset: 0; background: var(--night); color: var(--night-ink); z-index: 10; animation: fade .25s }
+@keyframes fade { from { opacity: 0 } }
+.stage { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; padding: 64px 0 16px }
+.stage img, .stage video { max-width: 100%; max-height: 100%; object-fit: contain; transition: transform .25s var(--snap); transform-origin: center }
+.stage img { cursor: zoom-in }
+.stage.zoomed img { cursor: grab }
+.stage audio { width: min(560px, 80vw) }
+.stage .glyph { display: grid; justify-items: center; gap: 16px; color: var(--night-muted) }
+.stage .glyph p { margin: 0 }
+.stage .glyph .i { width: 44px; height: 44px }
+/* The one gradient: a neutral scrim, so the file name stays readable over a bright photo. */
+.vbar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 4px; height: 64px; padding: 0 150px 0 12px; background: linear-gradient(var(--scrim-top), transparent) }
+.vbar .icon { color: var(--night-muted) }
+.vbar .icon:hover { background: var(--night-2); color: var(--night-ink) }
+.vname { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 8px }
+.vname strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.vname .meta { font-size: 12.5px; color: var(--night-muted) }
+#v-fav.on .i { fill: var(--crema); stroke: var(--crema) }
+#v-show.on { color: var(--crema) }
+.nav-btn { position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 48px; border-radius: 50%; background: var(--night-2); color: var(--night-ink); display: grid; place-items: center; transition: background-color .15s, transform .2s var(--snap) }
+.nav-btn:hover { background: var(--soft-2); color: var(--ink); transform: translateY(-50%) scale(1.06) }
+.nav-btn.prev { left: 16px }
+.nav-btn.next { right: 16px }
+::view-transition-group(hero) { animation-duration: .45s; animation-timing-function: var(--drift) }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .22s }
+
+/* Context menu */
+.menu { position: fixed; z-index: 20; min-width: 230px; padding: 6px; border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); animation: pop .18s var(--snap); transform-origin: top left }
+@keyframes pop { from { opacity: 0; transform: scale(.95) } }
+.menu button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 32px; padding: 0 10px; border-radius: 8px; text-align: left }
+.menu button .i { color: var(--muted); width: 16px; height: 16px }
+.menu button:hover { background: var(--soft) }
+.menu button.bad, .menu button.bad .i { color: var(--bad) }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px }
+.menu kbd { margin-left: auto; background: none; padding: 0; color: var(--muted) }
+
+/* Sheets */
+.sheet { border: 0; padding: 0; border-radius: 22px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); width: min(560px, 92vw); max-height: 86vh }
+.sheet[open] { animation: sheet-in .45s var(--float) }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(14px) scale(.97) } }
+.sheet::backdrop { background: var(--backdrop); animation: fade .25s }
+.sheet form { display: flex; flex-direction: column; gap: 12px; padding: 24px; max-height: 86vh; overflow-y: auto }
+.sheet h2 { margin: 0; font-size: 18px; letter-spacing: -.01em }
+.sheet p { margin: 0; color: var(--muted); font-size: 13px }
+.sheet h4 { margin: 10px 0 0; font-size: 14px; font-weight: 600 }
+.sheet input[type=text], .sheet input[type=number], .sheet input[type=date], .sheet input[type=password] { height: 38px; padding: 0 12px; border-radius: var(--r-row); border: 1px solid var(--line); background: var(--bg); outline: 0 }
+.sheet .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; flex-wrap: wrap }
+.seg { display: inline-flex; padding: 3px; border-radius: var(--r-pill); background: var(--soft); gap: 2px; flex-wrap: wrap }
+.seg button { height: 30px; padding: 0 14px; border-radius: var(--r-pill); font-size: 13px; transition: background-color .2s var(--snap) }
+.seg button.on { background: var(--surface); font-weight: 500 }
+.mini-seg { flex: none; flex-wrap: nowrap }
+.mini-seg button { padding: 0 10px; height: 26px; display: grid; place-items: center }
+.mini-seg .i { width: 16px; height: 16px }
+.list { display: flex; flex-direction: column; gap: 4px }
+.list .line { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 12px; border-radius: var(--r-row); background: var(--bg) }
+.list .line span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px }
+.list .line button { color: var(--muted); font-size: 13px }
+.list .line button:hover { color: var(--bad) }
+.list .line b { font-size: 13px; font-weight: 600; white-space: nowrap }
+.list .line .i { width: 16px; height: 16px; color: var(--muted) }
+.picker { max-height: 46vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; padding: 4px }
+.picker .row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 10px 0 calc(10px + var(--depth, 0) * 14px); border-radius: 8px; text-align: left }
+.picker .row:hover { background: var(--soft) }
+.picker .row.on { background: var(--soft-2); font-weight: 500 }
+.chiprow { display: flex; flex-wrap: wrap; gap: 6px }
+.chiprow button { height: 28px; padding: 0 10px; border-radius: var(--r-pill); background: var(--soft); font-size: 12.5px; display: inline-flex; align-items: center; gap: 4px }
+.chiprow button:hover { background: var(--soft-2) }
+.chiprow button .i { width: 12px; height: 12px }
+.note { font-size: 12.5px; color: var(--muted) }
+.ok { color: var(--ok) }
+.warn { color: var(--bad) !important; font-weight: 500 }
+.bad-text { color: var(--bad) }
+/* Password recovery: the QR code on white whatever the theme, so every phone camera reads it. */
+.qr { align-self: center; width: 200px; height: 200px; border-radius: var(--r-row); overflow: hidden }
+.qr svg { display: block; width: 100%; height: 100% }
+.secret { font: 15px var(--font-mono) !important; color: var(--ink) !important; user-select: all; overflow-wrap: anywhere }
+.sheet input.code { font-size: 22px; letter-spacing: .2em; text-align: center; height: 48px }
+.textlink { align-self: flex-start; padding: 0; color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; font-size: 13px }
+.textlink:hover { text-decoration-color: var(--ink) }
+.recovery { display: flex; flex-direction: column; gap: 8px }
+/* File names in the batch rename preview are the one place the mono face earns its keep. */
+.preview { font: 12px var(--font-mono); color: var(--muted); background: var(--bg); border-radius: var(--r-row); padding: 8px 10px; max-height: 120px; overflow-y: auto; white-space: pre }
+.meter { height: 6px; border-radius: 3px; background: var(--soft); overflow: hidden }
+.meter span { display: block; height: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left; transition: transform .3s }
+
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 14px; padding: 10px 10px 10px 18px; border-radius: var(--r-pill); background: var(--ink); color: var(--bg); box-shadow: var(--shadow); animation: bar-in .45s var(--float) }
+.toast button { height: 30px; padding: 0 12px; border-radius: var(--r-pill); color: var(--crema); font-weight: 600 }
+.toast button:hover { background: var(--wash) }
+.has-selbar .toast { bottom: 80px }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important } }

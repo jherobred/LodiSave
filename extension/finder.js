@@ -91,6 +91,21 @@ var LodiFinder = (() => {
     }
   }
 
+  // The handle of whoever posted the media an element shows, for its file name: Reddit's post author,
+  // else the first profile link (/name or /@name) in the post around it. '' when there is none.
+  // LodiShared.who falls back to the page's address and keeps it only on social apps.
+  function author(el) {
+    const post = el.closest?.('shreddit-post');
+    if (post) return post.getAttribute('author') || '';
+    const card = el.closest?.('article, [role="article"], div[data-pressable-container], [data-e2e="recommend-list-item-container"]');
+    const host = el.ownerDocument.location?.host;
+    for (const a of card?.querySelectorAll('a[href]') || []) {
+      const who = a.host === host && /^\/@?[\w.]+\/?$/.test(a.pathname) && LodiShared.handle(a.pathname);
+      if (who) return who;
+    }
+    return '';
+  }
+
   function fromElement(el, add) {
     const tag = el.localName, doc = el.ownerDocument, base = doc.baseURI;
     if (tag === 'meta') {
@@ -102,7 +117,7 @@ var LodiFinder = (() => {
     }
     if (NO_CSS.has(tag)) return;
     const r = el.getBoundingClientRect(), box = { rw: Math.round(r.width), rh: Math.round(r.height) };
-    const put = (url, kind, via, extra) => add(url, kind, via, base, { ...box, ...extra });
+    const put = (url, kind, via, extra) => add(url, kind, via, base, { ...box, who: author(el), ...extra });
 
     if (tag === 'img') {
       put(el.currentSrc || el.src, 'image', 'img', { w: el.naturalWidth, h: el.naturalHeight });

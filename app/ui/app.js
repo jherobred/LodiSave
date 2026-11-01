@@ -334,7 +334,9 @@ $('go').onclick = () => {
   else if (ui.state === 'link') saveLink(ui.link);
   else if (ui.state === 'image') saveImage();
   else if (ui.state === 'done') invoke('open_path', { path: ui.files[0] });
-  else if (ui.state === 'error' && ui.error === 'blocked') invoke('open_security');
+  // Windows' admin prompt adds LodiSave to the allowed apps, then the save runs again. Windows
+  // Security opens instead when the prompt is declined or another antivirus is in charge.
+  else if (ui.state === 'error' && ui.error === 'blocked') invoke('allow_protected').then(() => (ui.link && !ui.captured ? saveLink(ui.link) : readClipboard()), () => invoke('open_security'));
   else if (ui.state === 'error' && ui.error === 'login' && ui.account) invoke('sign_in', { site: ui.account.id, lang: ui.lang }).catch(oops);
   else if (ui.state === 'error') ui.link && !ui.captured ? saveLink(ui.link) : readClipboard();
 };
@@ -1255,6 +1257,7 @@ $('intro-again').onclick = () => { $('prefs').close(); startIntro() };
 // Settings --------------------------------------------------------------------------------------
 
 $('open-prefs').onclick = () => $('prefs').showModal();
+$('open-gallery').onclick = () => invoke('open_gallery');
 $('close-prefs').onclick = () => $('prefs').close();
 $('extension').onclick = () => invoke('open_extension');
 $('repo').onclick = () => invoke('open_repo');

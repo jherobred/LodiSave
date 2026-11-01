@@ -169,7 +169,7 @@ fn split(name: &str) -> (String, String) {
     }
 }
 
-fn pick_folder(owner: isize, title: &str, start: &Path) -> Option<PathBuf> {
+pub fn pick_folder(owner: isize, title: &str, start: &Path) -> Option<PathBuf> {
     unsafe {
         let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
         dialog.SetOptions(dialog.GetOptions().ok()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM).ok()?;

@@ -55,6 +55,11 @@ const probe = (file) => {
   assert.equal(filenameFor({ url: 'https://cdn.test/v/master.m3u8', kind: 'hls' }, 'mp4'), 'master.mp4');
   assert.equal(filenameFor({ url: 'https://cdn.test/v/master.m3u8', kind: 'hls' }, 'aac', 'audio'), 'master-audio.aac');
   assert.equal(filenameFor({ url: 'https://pbs.twimg.com/media/Abc1?format=png&name=orig' }), 'Abc1.png');
+  // Who posted it and on which app come first; other sites stay unnamed.
+  assert.equal(filenameFor({ url: 'https://cdn.test/a_n.jpg', page: 'https://www.instagram.com/', who: 'natgeo' }), '@natgeo · Instagram · a_n.jpg');
+  assert.equal(filenameFor({ url: 'https://cdn.test/v.m3u8', kind: 'hls', page: 'https://www.tiktok.com/@khaby.lame/video/1' }, 'mp4'), '@khaby.lame · TikTok · v.mp4');
+  assert.equal(filenameFor({ url: 'https://i.pinimg.com/originals/a.jpg', page: 'https://www.pinterest.com/pin/1/' }), 'Pinterest · a.jpg');
+  assert.equal(filenameFor({ url: 'https://example.com/blog/a.jpg', page: 'https://example.com/blog/post', who: 'blog' }), 'a.jpg');
 
   // G4: full-size originals for X and Pinterest.
   assert.equal(upgrade('https://pbs.twimg.com/media/GZx1abc?format=jpg&name=small'), 'https://pbs.twimg.com/media/GZx1abc?format=jpg&name=orig');
@@ -78,6 +83,29 @@ const probe = (file) => {
   const mergedFile = path.join(os.tmpdir(), `lodisave-merge-${process.pid}.mp4`);
   fs.writeFileSync(mergedFile, MP4.merge(fs.readFileSync(path.join(media, 'av/video.mp4')), fs.readFileSync(path.join(media, 'av/audio.mp4'))));
   assert.deepEqual(probe(mergedFile), { streams: 'audio+video', clean: true });
+  // What players feed MediaSource: a loop replays fragments, a quality switch starts a new init, and
+  // video can start after the audio. Each track plays once, in order, both starting at 0.
+  const pieces = (file) => {
+    const b = fs.readFileSync(path.join(media, file)), top = [];
+    for (let o = 0; o + 8 <= b.length; o += b.readUInt32BE(o)) top.push({ type: b.toString('latin1', o + 4, o + 8), b: b.subarray(o, o + b.readUInt32BE(o)) });
+    const frags = top.flatMap((x, i) => (x.type === 'moof' ? [Buffer.concat([x.b, top[i + 1].b])] : []));
+    return { init: Buffer.concat(top.filter((x) => x.type === 'ftyp' || x.type === 'moov').map((x) => x.b)), frags };
+  };
+  const pv = pieces('av/video.mp4'), pa = pieces('av/audio.mp4');
+  const packets = (file) => spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'packet=stream_index,pts_time', '-of', 'csv=p=0', file], { encoding: 'utf8' })
+    .stdout.trim().split(/\r?\n/).map((l) => l.split(',')).reduce((m, [s, t]) => ((m[s] ||= []).push(+t), m), {});
+  for (const [name, video, audio, seconds] of [
+    ['loop', [pv.init, ...pv.frags, pv.init, ...pv.frags], [pa.init, ...pa.frags, ...pa.frags], 3],
+    ['switch', [pv.init, pv.frags[0], pv.init, ...pv.frags.slice(1)], [pa.init, ...pa.frags], 3],
+    ['late video', [pv.init, ...pv.frags.slice(1)], [pa.init, ...pa.frags], 2],
+  ]) {
+    fs.writeFileSync(mergedFile, MP4.merge(Buffer.concat(video), Buffer.concat(audio)));
+    assert.deepEqual(probe(mergedFile), { streams: 'audio+video', clean: true }, name);
+    for (const ts of Object.values(packets(mergedFile))) {
+      assert.equal(new Set(ts).size, ts.length, `${name}: no repeated frames`);
+      assert.ok(Math.min(...ts) < 0.1 && Math.abs(Math.max(...ts) - seconds) < 0.1, `${name}: ${Math.min(...ts)}..${Math.max(...ts)}`);
+    }
+  }
   fs.rmSync(mergedFile);
   assert.equal(MP4.merge(fs.readFileSync(path.join(media, 'clip.webm')), fs.readFileSync(path.join(media, 'av/audio.mp4'))), null);
   const manifest = JSON.parse(fs.readFileSync(path.join(ext, 'manifest.json'), 'utf8'));

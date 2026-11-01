@@ -19,6 +19,7 @@ tauri-build = { version = "2.6", features = [] }
 [dependencies]
 arboard = { version = "3", default-features = false, features = ["image-data"] }
 png = "0.18"
+qrcode = { version = "0.14", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2.12", features = ["tray-icon", "image-png", "protocol-asset", "unstable"] }

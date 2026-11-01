@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>LodiSave Gallery</title>
+<meta name="description" content="Photos, videos and sounds in the folders you add, sorted, locked and backed up by LodiSave.">
+<link rel="stylesheet" href="gallery.css">
+<svg class="sprite" aria-hidden="true">
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-prefs" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-9.3-9.3A5 5 0 0 1 12 6.4a5 5 0 0 1 9.3 4.3C19.5 15.4 12 20 12 20z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></symbol>
+  <symbol id="i-move" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><path d="M9 13.5h6M12.5 11l2.5 2.5-2.5 2.5"/></symbol>
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5M18 14v3.5a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 4 17.5v-9A2.5 2.5 0 0 1 6.5 6H10"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="3"/><path d="M15.5 8.5V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v5.5a3 3 0 0 0 3 3h1.5"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19.2 8.8a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4.5h6V7"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.8v.1"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></symbol>
+  <symbol id="i-masonry" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="10" rx="2"/><rect x="13" y="4" width="7" height="6" rx="2"/><rect x="4" y="16" width="7" height="4" rx="1.5"/><rect x="13" y="12" width="7" height="8" rx="2"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M4 4l16 16M10.4 5.7A9 9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-3 3.7M6.6 6.9C4 8.6 2.5 12 2.5 12S6 18.5 12 18.5c1.8 0 3.3-.5 4.6-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 5 3.5 3.5V14h-11v-1.5L10 9z"/><path d="M12 14v6"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.5 12.2V5a1.5 1.5 0 0 1 1.5-1.5h7.2l8.3 8.3a1.5 1.5 0 0 1 0 2.1l-7 7a1.5 1.5 0 0 1-2.1 0z"/><circle cx="8.3" cy="8.3" r="1.4"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18.5a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.5 1.6A3.8 3.8 0 0 1 17.5 18.5z"/></symbol>
+  <symbol id="i-twins" viewBox="0 0 24 24"><rect x="3.5" y="6" width="10" height="13" rx="2.5"/><path d="M10.5 3.5h7.5a2.5 2.5 0 0 1 2.5 2.5v10"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5V9H15"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M20.5 15.5l-5-5-9 9"/></symbol>
+  <symbol id="i-show" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2.5"/><path d="M10.5 8.8v4.4l3.8-2.2z" fill="currentColor"/><path d="M8 20.5h8"/></symbol>
+  <symbol id="i-rotr" viewBox="0 0 24 24"><path d="M20 4.5V10h-5.5"/><path d="M19 15a7.5 7.5 0 1 1-1.8-7.8L20 10"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9.5 4.5v15"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M14.5 4.5v15"/></symbol>
+  <symbol id="i-min" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-max" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+  <symbol id="i-unmax" viewBox="0 0 24 24"><rect x="5.5" y="8.5" width="10" height="10" rx="1.5"/><path d="M8.5 5.5h8.5a1.5 1.5 0 0 1 1.5 1.5v8.5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+  <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 7.7-1.5"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.4-3 8-7 9.5-4-1.5-7-5.1-7-9.5V6z"/><path d="M12 8.5v4M12 15.5v.1"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-6.5 6.5M4 20l6.5-6.5"/></symbol>
+</svg>
+
+<!-- Window buttons: the window has no title bar of its own, so these sit over the top-right corner. -->
+<div class="caption">
+  <button type="button" id="w-min" title="Minimize"><svg class="i" aria-hidden="true"><use href="#i-min"/></svg></button>
+  <button type="button" id="w-max" title="Maximize"><svg class="i" aria-hidden="true"><use href="#i-max"/></svg></button>
+  <button type="button" id="w-close" class="x" title="Close"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button>
+</div>
+
+<div class="app" id="app">
+  <aside class="side" id="side">
+    <div class="side-top" data-tauri-drag-region>
+      <span class="brand" data-tauri-drag-region><img src="lodi.svg" alt="" width="28" height="28"><span data-tauri-drag-region>LodiSave <em>Gallery</em></span></span>
+      <button type="button" class="icon" id="toggle-side" title="Collapse the sidebar ([)"><svg class="i" aria-hidden="true"><use href="#i-left"/></svg></button>
+    </div>
+    <nav class="nav" id="nav">
+      <button type="button" data-view="all" title="All media"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>All media</span></button>
+      <button type="button" data-view="fav" title="Favorites"><svg class="i" aria-hidden="true"><use href="#i-heart"/></svg><span>Favorites</span></button>
+      <button type="button" data-view="recent" title="Last 30 days"><svg class="i" aria-hidden="true"><use href="#i-clock"/></svg><span>Last 30 days</span></button>
+      <button type="button" data-view="dups" title="Duplicates"><svg class="i" aria-hidden="true"><use href="#i-twins"/></svg><span>Duplicates</span></button>
+      <button type="button" id="lock-now" title="Lock again: forget the passwords typed this session" hidden><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg><span>Lock again</span></button>
+      <button type="button" id="open-drive" title="Google Drive"><svg class="i" aria-hidden="true"><use href="#i-cloud"/></svg><span>Google Drive</span></button>
+    </nav>
+    <h3 id="pinned-head"><span>Pinned</span></h3>
+    <div class="folders" id="pinned"></div>
+    <h3 class="tree-head"><span>Folders</span> <button type="button" class="mini" id="add-folder" title="Add a folder"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button></h3>
+    <div class="folders tree" id="tree"></div>
+    <h3 id="from-head" class="tree-head" hidden><span>Saved from</span></h3>
+    <div class="folders" id="from"></div>
+    <h3 id="tags-head" class="tree-head" hidden><span>Tags</span></h3>
+    <div class="tags" id="tags"></div>
+    <span class="grow"></span>
+    <button type="button" class="side-foot" id="open-settings" title="Folders and settings"><svg class="i" aria-hidden="true"><use href="#i-prefs"/></svg><span>Folders and settings</span></button>
+  </aside>
+
+  <main class="main">
+    <header class="bar" data-tauri-drag-region>
+      <div class="title" data-tauri-drag-region><h1 id="title" data-tauri-drag-region>All media</h1><p id="sub" class="meta" data-tauri-drag-region></p></div>
+      <label class="search"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><input id="query" type="search" placeholder="Search names, tags, folders" spellcheck="false"></label>
+    </header>
+    <div class="tools">
+      <div class="chips" id="kinds">
+        <button type="button" data-kind="all" class="on">All</button>
+        <button type="button" data-kind="image">Photos</button>
+        <button type="button" data-kind="video">Videos</button>
+        <button type="button" data-kind="gif">GIFs</button>
+        <button type="button" data-kind="audio">Sounds</button>
+      </div>
+      <label class="check" id="deep-wrap" hidden><input type="checkbox" id="deep"> Include subfolders</label>
+      <span class="grow"></span>
+      <div class="seg mini-seg" id="layout">
+        <button type="button" data-layout="grid" title="Even rows"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg></button>
+        <button type="button" data-layout="masonry" title="Pinterest"><svg class="i" aria-hidden="true"><use href="#i-masonry"/></svg></button>
+      </div>
+      <select id="sort" title="Sort">
+        <option value="new">Newest first</option>
+        <option value="old">Oldest first</option>
+        <option value="name">Name</option>
+        <option value="size">Biggest first</option>
+      </select>
+      <input type="range" id="zoom" min="110" max="360" step="10" title="Tile size (Ctrl + wheel)">
+      <button type="button" class="icon" id="refresh" title="Refresh (F5)"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+    </div>
+    <div class="scroll" id="scroll">
+      <div class="empty" id="empty" hidden></div>
+      <div id="grid"></div>
+      <div id="more"></div>
+    </div>
+    <div class="selbar" id="selbar" hidden>
+      <strong id="sel-count"></strong>
+      <button type="button" data-act="fav" title="Favorite"><svg class="i" aria-hidden="true"><use href="#i-heart"/></svg><span>Favorite</span></button>
+      <button type="button" data-act="tag" title="Tag"><svg class="i" aria-hidden="true"><use href="#i-tag"/></svg><span>Tag</span></button>
+      <button type="button" data-act="move" title="Move"><svg class="i" aria-hidden="true"><use href="#i-move"/></svg><span>Move</span></button>
+      <button type="button" data-act="copyto" title="Copy to"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg><span>Copy to</span></button>
+      <button type="button" data-act="rename" title="Rename"><svg class="i" aria-hidden="true"><use href="#i-edit"/></svg><span>Rename</span></button>
+      <button type="button" data-act="drive" title="Back up"><svg class="i" aria-hidden="true"><use href="#i-cloud"/></svg><span>Back up</span></button>
+      <button type="button" data-act="clip" title="Copy"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button>
+      <button type="button" data-act="trash" class="bad" title="Delete"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg><span>Delete</span></button>
+      <span class="grow"></span>
+      <button type="button" data-act="all">Select all</button>
+      <button type="button" data-act="none" class="icon" title="Clear (Esc)"><svg class="i" aria-hidden="true"><use href="#i-close"/></svg></button>
+    </div>
+  </main>
+
+  <aside class="peek" id="peek">
+    <div class="peek-top" data-tauri-drag-region>
+      <button type="button" class="icon" id="toggle-peek" title="Collapse the preview (])"><svg class="i" aria-hidden="true"><use href="#i-right"/></svg></button>
+      <span class="peek-label" id="peek-label" data-tauri-drag-region>Overview</span>
+    </div>
+    <div class="peek-body" id="peek-body"></div>
+    <div class="peek-rail" id="peek-rail"></div>
+  </aside>
+</div>
+
+<div class="viewer" id="viewer" hidden>
+  <div class="stage" id="stage"></div>
+  <header class="vbar" data-tauri-drag-region>
+    <button type="button" class="icon" id="v-close" title="Close (Esc)"><svg class="i" aria-hidden="true"><use href="#i-back"/></svg></button>
+    <div class="vname" data-tauri-drag-region><strong id="v-name"></strong><span id="v-meta" class="meta"></span></div>
+    <button type="button" class="icon" id="v-show" title="Slideshow (S)"><svg class="i" aria-hidden="true"><use href="#i-show"/></svg></button>
+    <button type="button" class="icon" id="v-rot" title="Turn (R)"><svg class="i" aria-hidden="true"><use href="#i-rotr"/></svg></button>
+    <button type="button" class="icon" id="v-fav" title="Favorite (F)"><svg class="i" aria-hidden="true"><use href="#i-heart"/></svg></button>
+    <button type="button" class="icon" id="v-open" title="Open with its app"><svg class="i" aria-hidden="true"><use href="#i-open"/></svg></button>
+    <button type="button" class="icon" id="v-reveal" title="Show in File Explorer"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg></button>
+    <button type="button" class="icon" id="v-trash" title="Delete (Del)"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg></button>
+  </header>
+  <button type="button" class="nav-btn prev" id="v-prev" title="Previous (←)"><svg class="i" aria-hidden="true"><use href="#i-back"/></svg></button>
+  <button type="button" class="nav-btn next" id="v-next" title="Next (→)"><svg class="i" aria-hidden="true"><use href="#i-next"/></svg></button>
+</div>
+
+<div class="menu" id="menu" hidden></div>
+
+<dialog class="sheet" id="sheet">
+  <form method="dialog" id="sheet-body"></form>
+</dialog>
+
+<div class="toast" id="toast" hidden><span id="toast-text"></span><button type="button" id="toast-undo">Undo</button></div>
+
+<script src="gallery.js"></script>

@@ -92,7 +92,7 @@
     for (const it of found) {
       if (it.url.startsWith('blob:')) {
         const streams = page.filter((h) => h.msUrl === it.url);
-        if (streams.length) { for (const s of streams) push({ ...s, rw: it.rw, rh: it.rh }); continue }
+        if (streams.length) { for (const s of streams) push({ ...s, rw: it.rw, rh: it.rh, who: it.who }); continue }
         const b = blobs.get(it.url);
         if (b) { push({ ...it, id: b.id, via: 'blob', mime: b.mime, bytes: b.bytes }); continue }
         // A player's blob: URL with nothing captured behind it yet.
@@ -128,7 +128,7 @@
       const manifests = [...loaded].filter((u) => /^(hls|dash)$/.test(LodiFinder.kindOf(u) || ''));
       const stem = (u) => u.split(/[?#]/)[0].replace(/\.(m3u8|mpd)$/i, '');
       const whole = manifests.find((m) => manifests.every((o) => stem(o).startsWith(stem(m))));
-      if (whole) top = { url: whole, kind: LodiFinder.kindOf(whole), via: 'network', page: location.href };
+      if (whole) top = { url: whole, kind: LodiFinder.kindOf(whole), via: 'network', page: location.href, who: top.who };
     }
     return top;
   }

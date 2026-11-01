@@ -81,7 +81,7 @@ struct Kept {
 
 /// Seals (DPAPI's CryptProtectData) or opens data for the current Windows user only. The extra
 /// entropy keeps other programs that ask DPAPI from opening it without knowing it's LodiSave's.
-fn dpapi(data: &[u8], seal: bool) -> Result<Vec<u8>, String> {
+pub fn dpapi(data: &[u8], seal: bool) -> Result<Vec<u8>, String> {
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Cryptography::{CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData};
     let blob = |b: &[u8]| CRYPT_INTEGER_BLOB { cbData: b.len() as u32, pbData: b.as_ptr() as *mut u8 };

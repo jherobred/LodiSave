@@ -21,7 +21,7 @@ fn progress(app: &AppHandle, phase: &str, percent: Option<f64>) {
     let _ = app.emit("job://progress", json!({ "phase": phase, "percent": percent }));
 }
 
-fn command(exe: impl AsRef<std::ffi::OsStr>) -> Command {
+pub fn command(exe: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut c = Command::new(exe);
     c.creation_flags(NO_WINDOW).stdin(Stdio::null()).env("PYTHONIOENCODING", "utf-8");
     c
@@ -357,21 +357,22 @@ fn video(app: &AppHandle, exe: &Path, url: &str, dir: &Path) -> Result<Vec<PathB
         info["title"] = "reddit".into();
         info["id"] = id.into();
     }
-    let stem = format!("{} [{}]", clean_name(info["title"].as_str().unwrap_or("")), clean_name(info["id"].as_str().unwrap_or("")));
+    let (who, rest) = (uploader(&info), format!("{} [{}]", clean_name(info["title"].as_str().unwrap_or("")), clean_name(info["id"].as_str().unwrap_or(""))));
+    let stem = label(&who, url, &rest);
     // A file the generic reader found named in a page (og:video) is fetched here, as in lodi.py:
     // yt-dlp asks for it as a browser asks for a page, and Giphy then sends its web page in place of
     // the video.
     let direct = info["extractor_key"] == "Generic" && info["formats"].is_null() && matches!(info["protocol"].as_str(), Some("http" | "https"));
     if let Some(file) = info["url"].as_str().filter(|_| direct) {
         progress(app, "saving", None);
-        return fetch_item(&Item { srcs: vec![file.into()], name: stem }, url, dir).map(|p| vec![p]);
+        return fetch_item(&Item { srcs: vec![file.into()], who, name: rest }, url, dir).map(|p| vec![p]);
     }
     let tmp = std::env::temp_dir().join("LodiSave");
     let _ = std::fs::create_dir_all(&tmp);
     let json = tmp.join(format!("{}.json", std::process::id()));
     std::fs::write(&json, info.to_string()).map_err(|e| e.to_string())?;
     let result = (|| -> Result<Vec<PathBuf>, String> {
-        let template = dir.join("%(title).70B [%(id)s].%(ext)s");
+        let template = dir.join(format!("{}.%(ext)s", stem.replace('%', "%%")));
         // With FFmpeg on PATH yt-dlp merges the best streams itself.
         let choice = if on_path("ffmpeg.exe") { None } else { pick(&info) };
         match choice {
@@ -529,12 +530,49 @@ fn resolve(url: &str) -> String {
 #[derive(Debug, PartialEq)]
 struct Item {
     srcs: Vec<String>,
+    /// Who posted it, a handle without the @, or "".
+    who: String,
     name: String,
 }
 
-fn named(found: Vec<Vec<String>>, stem: &str) -> Vec<Item> {
-    let (stem, n) = (clean_name(stem.trim()), found.len());
-    found.into_iter().enumerate().map(|(i, srcs)| Item { srcs, name: if n == 1 { stem.clone() } else { format!("{stem} ({})", i + 1) } }).collect()
+fn named(found: Vec<Vec<String>>, who: &str, stem: &str) -> Vec<Item> {
+    let (stem, n, who) = (clean_name(stem.trim()), found.len(), who.trim().trim_start_matches('@'));
+    found.into_iter().enumerate().map(|(i, srcs)| Item { srcs, who: who.into(), name: if n == 1 { stem.clone() } else { format!("{stem} ({})", i + 1) } }).collect()
+}
+
+/// The social app a link is on, named in saved files. Other sites stay unnamed.
+fn app_of(url: &str) -> Option<&'static str> {
+    const APPS: &[(&[&str], &str)] = &[
+        (&["instagram.com"], "Instagram"), (&["threads.net", "threads.com"], "Threads"), (&["facebook.com", "fb.watch"], "Facebook"),
+        (&["x.com", "twitter.com", "twimg.com"], "X"), (&["tiktok.com"], "TikTok"), (&["reddit.com", "redd.it"], "Reddit"), (&["pin.it"], "Pinterest"),
+        (&["snapchat.com"], "Snapchat"), (&["youtube.com", "youtu.be"], "YouTube"), (&["tumblr.com"], "Tumblr"), (&["bsky.app"], "Bluesky"),
+        (&["twitch.tv"], "Twitch"), (&["linkedin.com"], "LinkedIn"),
+    ];
+    let host = host_path(url)?.0.split(':').next()?;
+    if host.split('.').any(|p| p == "pinterest") {
+        return Some("Pinterest");
+    }
+    APPS.iter().find(|(ds, _)| ds.iter().any(|d| host == *d || host.ends_with(&format!(".{d}")))).map(|(_, a)| *a)
+}
+
+/// "@who · App · rest", as label in extension/shared.js: who posted a save and where come first, so
+/// saves sort and read by person.
+fn label(who: &str, url: &str, rest: &str) -> String {
+    let app = app_of(url);
+    let who = if app.is_some() && !who.is_empty() { format!("@{who}") } else { String::new() };
+    clean_name(&[who.as_str(), app.unwrap_or(""), rest].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · "))
+}
+
+/// The poster's handle yt-dlp found: a handle-like uploader_id, channel or uploader first, a display
+/// name after, never a numeric account id.
+fn uploader(info: &Value) -> String {
+    let names: Vec<&str> = ["uploader_id", "channel", "uploader"]
+        .iter()
+        .filter_map(|k| info[*k].as_str())
+        .map(|s| s.trim().trim_start_matches('@'))
+        .filter(|s| !s.is_empty() && !s.bytes().all(|b| b.is_ascii_digit()))
+        .collect();
+    names.iter().find(|s| !s.contains(' ')).or(names.first()).map(|s| s.to_string()).unwrap_or_default()
 }
 
 fn word(s: &str) -> bool {
@@ -574,7 +612,7 @@ fn meta_items(page: &str, code: &str) -> Option<Vec<Item>> {
         .filter_map(|b| serde_json::from_str::<Value>(b).ok())
         .find_map(|v| find(&v, code).cloned())?;
     let media = post["carousel_media"].as_array().filter(|a| !a.is_empty()).map_or(vec![&post], |a| a.iter().collect());
-    Some(named(meta_media(&media), &format!("{} {code}", post["user"]["username"].as_str().unwrap_or(""))))
+    Some(named(meta_media(&media), post["user"]["username"].as_str().unwrap_or(""), code))
 }
 
 fn giphy(url: &str) -> bool {
@@ -726,7 +764,7 @@ fn story_items((user, highlight, only): Story) -> Result<Vec<Item>, String> {
         return Err(if highlight.is_some() { "login" } else { "gone" }.into());
     }
     let owner = found["user"]["username"].as_str().or(user.as_deref()).unwrap_or("instagram");
-    Ok(named(meta_media(&media), &format!("{owner} {}", only.or(highlight).as_deref().unwrap_or("story"))))
+    Ok(named(meta_media(&media), owner, only.or(highlight).as_deref().unwrap_or("story")))
 }
 
 /// The JSON a page carries in <script id="...">, or Null.
@@ -763,7 +801,7 @@ fn snap_items(url: &str) -> Option<Vec<Item>> {
     let named_id = url.split(['/', '?', '&', '=', '#']).find(|s| uuid(s));
     let story = stories.iter().find(|s| named_id.is_some() && s["highlightId"]["value"].as_str() == named_id).unwrap_or(&stories[0]);
     let found = story["snapList"].as_array().into_iter().flatten().filter_map(|s| s["snapUrls"]["mediaUrl"].as_str().map(|u| vec![u.to_string()])).collect();
-    let items = named(found, &format!("{} story", props["userProfile"]["publicProfileInfo"]["username"].as_str().unwrap_or("snapchat")));
+    let items = named(found, props["userProfile"]["publicProfileInfo"]["username"].as_str().unwrap_or(""), "story");
     (!items.is_empty()).then_some(items)
 }
 
@@ -788,7 +826,7 @@ fn tiktok_photos(url: &str) -> Option<Vec<Item>> {
             (!urls.is_empty()).then_some(urls)
         })
         .collect();
-    let items = named(found, &format!("{} {}", item["author"]["uniqueId"].as_str().unwrap_or("tiktok"), item["id"].as_str().unwrap_or("")));
+    let items = named(found, item["author"]["uniqueId"].as_str().unwrap_or(""), item["id"].as_str().unwrap_or(""));
     (!items.is_empty()).then_some(items)
 }
 
@@ -858,7 +896,7 @@ fn fb_story_items(url: &str, card: Option<&str>) -> Result<Vec<Item>, String> {
         // yt-dlp has no reader for Facebook stories either.
         return Err("broken".into());
     }
-    Ok(named(srcs, "facebook story"))
+    Ok(named(srcs, "", "story"))
 }
 
 /// The id in a link to a post on X.
@@ -904,8 +942,7 @@ fn x_items(id: &str) -> Option<Vec<Item>> {
             }
         })
         .collect();
-    let stem = format!("{} {id}", data["user"]["screen_name"].as_str().unwrap_or(""));
-    Some(named(found, &stem)).filter(|items| !items.is_empty())
+    Some(named(found, data["user"]["screen_name"].as_str().unwrap_or(""), id)).filter(|items| !items.is_empty())
 }
 
 /// The subreddit, when named, and the post id in a reddit.com path: r/<sub>/comments/<id>,
@@ -1012,7 +1049,7 @@ fn reddit_items(sub: Option<&str>, post: &str, follow: bool) -> Option<Vec<Item>
         let (sub, other) = reddit_links(&page).find(|(_, id)| *id != post)?;
         return follow.then(|| reddit_items(sub, other, false)).flatten();
     }
-    Some(named(found.into_iter().map(|s| vec![s]).collect(), &format!("{sub} {post}")))
+    Some(named(found.into_iter().map(|s| vec![s]).collect(), "", &format!("{sub} {post}")))
 }
 
 /// A post's photos and videos from LodiSave's own readers. None hands the link to yt-dlp.
@@ -1022,7 +1059,7 @@ fn site_items(url: &str) -> Option<Vec<Item>> {
         let post = &url[..url.find(code)? + code.len()];
         match post.split_once("/@") {
             // A Threads post with no photo or video may have a GIF, which its page hides from visitors.
-            Some((_, user)) if items.is_empty() => Some(named(threads_gifs(post), &format!("{} {code}", user.split('/').next()?))),
+            Some((_, user)) if items.is_empty() => Some(named(threads_gifs(post), user.split('/').next()?, code)),
             _ => Some(items),
         }
     } else if let Some((sub, post)) = reddit_post(url) {
@@ -1057,7 +1094,7 @@ fn fetch_item(item: &Item, referer: &str, dir: &Path) -> Result<PathBuf, String>
         let _ = std::fs::File::open(&part).and_then(|f| f.take(64).read_to_end(&mut head));
         let code = match (status, file_ext(&head, &kind)) {
             ("200", Some(ext)) => {
-                let path = unique(dir, &item.name, ext);
+                let path = unique(dir, &label(&item.who, referer, &item.name), ext);
                 if std::fs::rename(&part, &path).is_ok() {
                     return Ok(path);
                 }
@@ -1101,20 +1138,20 @@ fn page_items(url: &str) -> Result<Vec<Item>, String> {
     let file = |u: &str| u.split(['?', '#']).next().unwrap_or("").rsplit('/').next().unwrap_or("").to_string();
     let stem = |u: &str| file(u).rsplit_once('.').map_or(file(u), |(s, _)| s.to_string());
     // A page too big to read whole (over 8 MB) is a file.
-    let Some((page, last)) = page_of(url) else { return Ok(named(vec![vec![url.into()]], &stem(url))) };
+    let Some((page, last)) = page_of(url) else { return Ok(named(vec![vec![url.into()]], "", &stem(url))) };
     let origin = last.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
     let absolute = |u: String| if u.starts_with("//") { format!("https:{u}") } else if u.starts_with('/') { format!("{origin}{u}") } else { u };
     if let Some(moving) = og_video(&page).map(absolute) {
-        return Ok(named(vec![vec![moving.clone()]], &stem(&moving)));
+        return Ok(named(vec![vec![moving.clone()]], "", &stem(&moving)));
     }
     if is_video_page(&page) {
         return Err("nothing".into());
     }
-    let Some(shown) = og_image(&page).map(absolute) else { return Ok(named(vec![vec![last.clone()]], &stem(&last))) };
+    let Some(shown) = og_image(&page).map(absolute) else { return Ok(named(vec![vec![last.clone()]], "", &stem(&last))) };
     if !shown.starts_with("http") || site_art(&file(&shown)) {
         return Err("nothing".into());
     }
-    Ok(named(vec![upgrade(&shown).into_iter().chain([shown.clone()]).collect()], &stem(&shown)))
+    Ok(named(vec![upgrade(&shown).into_iter().chain([shown.clone()]).collect()], "", &stem(&shown)))
 }
 
 /// Saves a link. `cookies` is the user's sign-in for the link's site, a Netscape cookies.txt file
@@ -1218,6 +1255,18 @@ mod tests {
     }
 
     #[test]
+    fn names_lead_with_who_and_app() {
+        use super::{label, uploader};
+        assert_eq!(label("natgeo", "https://www.instagram.com/p/ABC/", "ABC"), "@natgeo · Instagram · ABC");
+        assert_eq!(label("", "https://v.redd.it/x/DASHPlaylist.mpd", "reddit [x]"), "Reddit · reddit [x]");
+        assert_eq!(label("bob", "https://www.pinterest.ph/pin/1/", "a"), "@bob · Pinterest · a");
+        assert_eq!(label("bob", "https://example.com/a", "a"), "a");
+        assert_eq!(uploader(&json!({ "uploader_id": "6800", "channel": "Khaby Lame", "uploader": "khaby.lame" })), "khaby.lame");
+        assert_eq!(uploader(&json!({ "uploader_id": "@MrBeast", "channel": "MrBeast" })), "MrBeast");
+        assert_eq!(uploader(&json!({ "uploader": "Jane Doe" })), "Jane Doe");
+    }
+
+    #[test]
     fn codes_links_and_site_art() {
         use super::error_code as code;
         assert_eq!(code("ERROR: [Rumble] v1: Unable to download webpage: HTTP Error 403: Forbidden"), "refused");
@@ -1256,7 +1305,7 @@ mod tests {
         let page = format!(r#"<script type="application/json" data-sjs>{}</script>"#, json!({ "a": [{ "code": "ABC" }, carousel] }));
         let items = super::meta_items(&page, "ABC").unwrap();
         let got: Vec<(&str, &str)> = items.iter().map(|i| (i.srcs[0].as_str(), i.name.as_str())).collect();
-        assert_eq!(got, [("https://x.test/b.jpg", "nasa ABC (1)"), ("https://x.test/v.mp4", "nasa ABC (2)")]);
+        assert_eq!(got, [("https://x.test/b.jpg", "ABC (1)"), ("https://x.test/v.mp4", "ABC (2)")]);
         assert_eq!(super::meta_items(&page, "XYZ"), None);
         let single = format!(r#"<script type="application/json">{}</script>"#, json!({ "code": "Q", "image_versions2": { "candidates": [{ "url": "https://x.test/q.jpg" }] } }));
         assert_eq!(super::meta_items(&single, "Q").unwrap()[0].name, "Q");

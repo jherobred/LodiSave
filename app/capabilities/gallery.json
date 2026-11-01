@@ -1,0 +1,13 @@
+{
+  "identifier": "gallery",
+  "description": "The gallery window draws its own title bar, so it may move, minimize, maximize and close itself.",
+  "windows": ["gallery"],
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close"
+  ]
+}

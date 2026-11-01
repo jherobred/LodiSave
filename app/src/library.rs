@@ -50,6 +50,9 @@ pub struct Meta {
     pub clear: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// The gallery's tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// library.json, keyed by the lowercased path in the save folder (Windows ignores case).
@@ -97,7 +100,7 @@ impl Store {
     }
 
     /// Moves the entries of files and folders that moved: (from, to) pairs of paths in the folder.
-    fn rekey(&self, moves: &[(String, String)]) {
+    pub fn rekey(&self, moves: &[(String, String)]) {
         if moves.is_empty() {
             return;
         }
@@ -161,11 +164,11 @@ pub fn clean(name: &str) -> Result<String, String> {
     if bad || reserved { Err("name".into()) } else { Ok(name.to_string()) }
 }
 
-fn split(name: &str) -> (&str, &str) {
+pub fn split(name: &str) -> (&str, &str) {
     name.rsplit_once('.').filter(|(s, _)| !s.is_empty()).unwrap_or((name, ""))
 }
 
-fn unique(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+pub fn unique(dir: &Path, stem: &str, ext: &str) -> PathBuf {
     let dot = if ext.is_empty() { String::new() } else { format!(".{ext}") };
     (1..).map(|n| if n < 2 { dir.join(format!("{stem}{dot}")) } else { dir.join(format!("{stem} ({n}){dot}")) }).find(|p| !p.exists()).unwrap()
 }

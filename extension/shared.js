@@ -12,6 +12,32 @@ var LodiShared = (() => {
     'audio/mp4': 'm4a', 'audio/webm': 'weba', 'audio/mpeg': 'mp3', 'audio/aac': 'aac',
   };
 
+  // Social apps by host, named in saved files. Other sites stay unnamed.
+  const APPS = [
+    [/(^|\.)instagram\.com$/, 'Instagram'], [/(^|\.)threads\.(net|com)$/, 'Threads'], [/(^|\.)(facebook\.com|fb\.watch)$/, 'Facebook'],
+    [/(^|\.)(x|twitter)\.com$/, 'X'], [/(^|\.)tiktok\.com$/, 'TikTok'], [/(^|\.)(reddit\.com|redd\.it)$/, 'Reddit'],
+    [/(^|\.)(pinterest\.[a-z.]+|pin\.it)$/, 'Pinterest'], [/(^|\.)snapchat\.com$/, 'Snapchat'], [/(^|\.)(youtube\.com|youtu\.be)$/, 'YouTube'],
+    [/(^|\.)tumblr\.com$/, 'Tumblr'], [/(^|\.)bsky\.app$/, 'Bluesky'], [/(^|\.)twitch\.tv$/, 'Twitch'], [/(^|\.)linkedin\.com$/, 'LinkedIn'],
+  ];
+  const appOf = (url) => {
+    try { return APPS.find(([re]) => re.test(new URL(url).hostname))?.[1] || '' } catch { return '' }
+  };
+  // A handle from a profile path, /name or /@name, skipping the app's own pages.
+  const NOT_USER = /^(p|reel|reels|tv|explore|stories|i|home|search|hashtag|watch|status|photo|video|videos|share|settings|notifications|messages|direct|accounts|about|login|signup|intent|compose|groups|pages|marketplace|gaming|r|u|t|pin|ideas|following|foryou|live|friends|profile|discover|tag|channel|c|shorts|feed)$/i;
+  const handle = (path) => {
+    const m = /^\/@?([\w.]{2,30})(\/|$)/.exec(path || '');
+    return m && !NOT_USER.test(m[1]) ? m[1] : '';
+  };
+  // "@who · App · rest": who posted it and where, first, so saves sort and read by person.
+  function label(item, rest) {
+    const app = appOf(item.page || item.url);
+    let who = '';
+    if (app) {
+      try { who = item.who || handle(new URL(item.page || item.url).pathname) } catch {}
+    }
+    return [who && `@${who}`, app, rest].filter(Boolean).join(' · ');
+  }
+
   // `ext` is the type of a file LodiSave built (an HLS stream saved as .mp4), which replaces the
   // URL's own extension. `suffix` tells apart two files from one item, like a separate audio track.
   function filenameFor(item, ext, suffix) {
@@ -28,7 +54,7 @@ var LodiShared = (() => {
     const base = (own ? name.slice(0, -own[0].length) : name) || `lodisave-${item.via || item.kind}-${Date.now()}`;
     const mime = item.mime || (item.url.startsWith('data:') ? item.url.slice(5).split(/[;,]/)[0] : '');
     const type = ext || own?.[1] || EXT[mime.split(';')[0].trim()] || format;
-    return base + (suffix ? `-${suffix}` : '') + (type ? `.${type}` : '');
+    return label(item, base) + (suffix ? `-${suffix}` : '') + (type ? `.${type}` : '');
   }
 
   const extFor = (mime) => EXT[(mime || '').split(';')[0].trim()] || '';
@@ -40,6 +66,6 @@ var LodiShared = (() => {
     return btoa(s);
   }
 
-  return { isYouTube, filenameFor, extFor, b64 };
+  return { isYouTube, filenameFor, extFor, b64, handle, appOf };
 })();
 if (typeof module !== 'undefined') module.exports = LodiShared;
