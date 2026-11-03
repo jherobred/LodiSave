@@ -32,13 +32,20 @@
   /* The top strip: 40 px of air where the window buttons sit, then the header row under it. */
   --strip: 40px; --top: calc(var(--strip) + 56px);
 }
+/* Dark follows Windows unless Settings › Theme picks Light or Dark (html data-theme). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme=light]) {
     color-scheme: dark;
     --bg: #111113; --surface: #18181A; --soft: #222225; --soft-2: #2C2C30; --line: #2C2C2F; --ink: #F4F3F1; --muted: #A3A19C;
     --accent: #FF8A3D; --accent-ink: #0F0F10; --pick: #E8B37A; --ok: #3DD68C; --bad: #FF6B5E;
     --shadow: 0 10px 30px rgba(0, 0, 0, .6);
   }
+}
+:root[data-theme=dark] {
+    color-scheme: dark;
+    --bg: #111113; --surface: #18181A; --soft: #222225; --soft-2: #2C2C30; --line: #2C2C2F; --ink: #F4F3F1; --muted: #A3A19C;
+    --accent: #FF8A3D; --accent-ink: #0F0F10; --pick: #E8B37A; --ok: #3DD68C; --bad: #FF6B5E;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .6);
 }
 
 * { box-sizing: border-box }
@@ -281,12 +288,20 @@ input[type=range] { width: 110px; accent-color: var(--ink) }
 kbd { font: inherit; font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--soft) }
 
 /* Viewer, graphite in both themes so photos sit on dark. */
-.viewer { position: fixed; inset: 0; background: var(--night); color: var(--night-ink); z-index: 10; animation: fade .25s }
+.viewer { position: fixed; inset: 0; background: var(--night); color: var(--night-ink); z-index: 10; view-transition-name: viewer }
+/* Opening and closing, only the picture and the backdrop move: the grid isn't snapshotted and
+   cross-faded under them, which is what made it stutter on big folders. */
+.vt-viewer::view-transition-old(root), .vt-viewer::view-transition-new(root) { animation: none }
+.vt-viewer .side, .vt-viewer .main, .vt-viewer .peek { view-transition-name: none }
+::view-transition-group(viewer) { animation-duration: .3s }
 @keyframes fade { from { opacity: 0 } }
 .stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 64px 16px 16px }
 /* Fitted to the window whatever its size: big photos shrink, small ones and videos grow to fill it. */
 .stage img, .stage video { width: 100%; height: 100%; object-fit: contain; transition: transform .25s var(--snap); transform-origin: center }
 .stage img { cursor: zoom-in }
+/* The space around the picture closes the viewer. */
+.stage { cursor: zoom-out }
+.stage .glyph, .stage video { cursor: auto }
 .stage.zoomed img { cursor: grab }
 .stage audio { width: min(560px, 80vw) }
 .stage .glyph { display: grid; justify-items: center; gap: 16px; color: var(--night-muted) }
@@ -346,6 +361,10 @@ kbd { font: inherit; font-size: 12px; padding: 1px 6px; border-radius: 6px; back
 .picker .row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 10px 0 calc(10px + var(--depth, 0) * 14px); border-radius: 8px; text-align: left }
 .picker .row:hover { background: var(--soft) }
 .picker .row.on { background: var(--soft-2); font-weight: 500 }
+.picker .row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.picker .row em { font-style: normal; font-size: 12px; color: var(--muted) }
+.choices { max-height: 34vh }
+.choices:empty { display: none }
 .chiprow { display: flex; flex-wrap: wrap; gap: 6px }
 .chiprow button { height: 28px; padding: 0 10px; border-radius: var(--r-pill); background: var(--soft); font-size: 12.5px; display: inline-flex; align-items: center; gap: 4px }
 .chiprow button:hover { background: var(--soft-2) }

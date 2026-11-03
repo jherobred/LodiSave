@@ -17,6 +17,10 @@ const icon = (name, cls = '') => {
   return svg;
 };
 const pref = (k, d) => { try { return localStorage.getItem(k) || d } catch { return d } };
+// Theme is picked in the gallery's settings, which share this storage.
+const paintTheme = () => (document.documentElement.dataset.theme = pref('theme', 'system'));
+paintTheme();
+addEventListener('storage', (e) => { if (e.key === 'theme') paintTheme() });
 const keep = (k, v) => { try { localStorage.setItem(k, v) } catch {} };
 const ui = {
   lang: pref('lang', 'en'), motion: pref('motion', 'on'), autostart: 'off', recent: pref('recent', 'show'), gaming: pref('gaming', 'auto'), playing: false,

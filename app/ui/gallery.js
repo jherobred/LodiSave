@@ -35,10 +35,14 @@ const ui = {
   layout: pref('g-layout', 'grid'), sideShut: pref('g-side', 'open') === 'shut', peekShut: pref('g-peek', 'open') === 'shut',
   // Width over height of each picture seen, for the Pinterest layout.
   ratios: new Map(),
+  quality: pref('g-quality', 'sharp'), hd: pref('g-hd', 'on') === 'on',
 };
-// Motion follows the panel's own setting, which shares this storage.
+// Motion and theme follow the panel's own settings, which share this storage.
 const still = () => pref('motion', 'on') === 'off';
 document.documentElement.classList.toggle('still', still());
+const paintTheme = () => (document.documentElement.dataset.theme = pref('theme', 'system'));
+paintTheme();
+addEventListener('storage', (e) => { if (e.key === 'theme') paintTheme() });
 
 // Changes what the window shows inside a View Transition, or at once with motion off.
 function swap(update) {
@@ -199,8 +203,12 @@ function paintSide() {
 
 const src = (p) => convertFileSrc(p);
 // Windows' own thumbnail of a file, sized for the tiles on this screen. Tiles fall back to the file
-// when Windows has none.
-const thumbSize = () => (ui.zoom * devicePixelRatio > 300 ? 512 : 256);
+// when Windows has none. The size is the long side, and a tile crops to a square that can stretch
+// to almost twice the slider's width, so Sharp asks for enough to cover that crop at screen pixels.
+const thumbSize = () => {
+  const need = ui.zoom * devicePixelRatio * (ui.quality === 'fast' ? 1 : 2.2);
+  return [256, 512, 768, 1024].find((s) => s >= need) || 1024;
+};
 const thumb = (r) => `${convertFileSrc(r.path, 'thumb')}?s=${thumbSize()}&m=${r.modified}`;
 const CHUNK = 160;
 // Videos get their file only once they scroll near, so a folder of clips doesn't load them all.
@@ -582,6 +590,7 @@ function act(what, ps = picked()) {
     blur: () => blur(ps, !ps.every((p) => item(p)?.blur)),
     tag: () => tagSheet(ps),
     move: () => folderSheet(ps, false),
+    newwith: () => newFolderWith(ps),
     copyto: () => folderSheet(ps, true),
     rename: () => (one ? renameSheet(one) : batchSheet(ps)),
     drive: () => (driveReady ? backup(ps) : driveLater()),
@@ -642,6 +651,7 @@ function tileMenu(r, x, y) {
     '-',
     { icon: 'edit', label: one ? 'Rename…' : 'Rename all…', key: 'F2', run: () => act('rename', ps) },
     { icon: 'move', label: 'Move to…', key: 'M', run: () => act('move', ps) },
+    { icon: 'folder-plus', label: one ? 'Move to a new folder…' : `New folder with these ${ps.length}…`, key: 'N', run: () => act('newwith', ps) },
     { icon: 'folder', label: 'Copy to…', run: () => act('copyto', ps) },
     { icon: 'copy', label: 'Copy', key: 'Ctrl+C', run: () => act('clip', ps) },
     { icon: 'copy', label: 'Copy path', run: () => act('path', ps) },
@@ -775,20 +785,25 @@ function tagSheet(ps) {
   input.focus();
 }
 
+// The gallery's own folders as a tree to pick one from. `on` is the picked path.
+function folderTree(pick, on, onPick, onGo) {
+  pick.replaceChildren(...(function rows(parent, depth) {
+    return lib.folders.filter((f) => f.parent === parent).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).flatMap((f) => {
+      const b = el('button', `row${f.path === on ? ' on' : ''}`, { type: 'button', title: f.path });
+      b.style.setProperty('--depth', depth);
+      b.append(icon('folder'), f.parent ? f.name : f.path);
+      b.onclick = () => onPick(f.path);
+      b.ondblclick = onGo;
+      return [b, ...rows(f.path, depth + 1)];
+    });
+  })(null, 0));
+}
+
 // A folder picker over the gallery's own folders, for Move and Copy.
 function folderSheet(ps, copy) {
   let dest = ui.view === 'folder' ? ui.folder : null;
   const pick = el('div', 'picker');
-  const paintPick = () => pick.replaceChildren(...(function rows(parent, depth) {
-    return lib.folders.filter((f) => f.parent === parent).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).flatMap((f) => {
-      const b = el('button', `row${f.path === dest ? ' on' : ''}`, { type: 'button', title: f.path });
-      b.style.setProperty('--depth', depth);
-      b.append(icon('folder'), f.parent ? f.name : f.path);
-      b.onclick = () => { dest = f.path; paintPick() };
-      b.ondblclick = () => go2();
-      return [b, ...rows(f.path, depth + 1)];
-    });
-  })(null, 0));
+  const paintPick = () => folderTree(pick, dest, (p) => { dest = p; paintPick() }, () => go2());
   paintPick();
   const name = el('input', '', { type: 'text', placeholder: 'New folder in the one picked' });
   const go2 = async () => {
@@ -806,6 +821,62 @@ function folderSheet(ps, copy) {
     el('p', 'note', { textContent: 'Tip: drag files onto a folder on the left to move them, or hold Ctrl to copy.' }),
     buttons(button('Cancel', '', close), button(copy ? 'Copy here' : 'Move here', 'primary', go2)),
   );
+}
+
+// Type a name for a new folder, or pick a folder already there, as in LodiSave's save bar: the
+// picked files move into it. The new folder goes where the files are, or in the folder picked below.
+function newFolderWith(ps) {
+  if (!ps.length) return;
+  const dirs = [...new Set(ps.map((p) => item(p)?.dir).filter(Boolean))];
+  const known = (d) => lib.folders.find((f) => low(f.path) === low(d))?.path;
+  let parent = (dirs.length === 1 && known(dirs[0])) || (ui.view === 'folder' && ui.folder) || known(lib.roots[0] || '');
+  const input = el('input', '', { type: 'text', placeholder: 'Type a new folder name, or find one' });
+  const choices = el('div', 'picker choices');
+  const where = el('div', 'picker', { hidden: true });
+  const change = el('button', 'textlink', { type: 'button' });
+  const make = async () => {
+    const name = input.value.trim();
+    if (!name) return input.focus();
+    if (!parent) return toast('Pick where the folder goes');
+    let to;
+    try { to = await invoke('g_mkdir', { parent, name }) } catch (e) { return oops(e) }
+    ui.open.add(parent);
+    keep('g-open', [...ui.open]);
+    close();
+    place(ps, to, false);
+  };
+  const into = (dest) => { close(); place(ps, dest, false) };
+  const paint2 = () => {
+    const q = low(input.value.trim());
+    change.textContent = `Makes it in ${parent ? base(parent) || parent : '…'}. Change`;
+    const rows = [];
+    if (q) {
+      const b = el('button', 'row on', { type: 'button' });
+      b.append(icon('folder-plus'), `New folder “${input.value.trim()}”`);
+      b.onclick = make;
+      rows.push(b);
+    }
+    // Folders already there whose name holds what was typed, the closest first.
+    const found = lib.folders.filter((f) => !q || low(f.name).includes(q)).sort((a, b) => low(a.name).indexOf(q) - low(b.name).indexOf(q) || a.name.length - b.name.length).slice(0, 8);
+    for (const f of found) {
+      const b = el('button', 'row', { type: 'button', title: f.path });
+      b.append(icon('folder'), el('span', 'name', { textContent: f.parent ? f.name : f.path }), el('em', '', { textContent: f.parent ? base(f.parent) : '' }));
+      b.onclick = () => into(f.path);
+      rows.push(b);
+    }
+    choices.replaceChildren(...rows);
+    folderTree(where, parent, (p) => { parent = p; paint2() }, make);
+  };
+  input.oninput = paint2;
+  input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); make() } };
+  change.onclick = () => { where.hidden = !where.hidden };
+  paint2();
+  sheet(
+    el('h2', '', { textContent: ps.length === 1 ? `Move ${base(ps[0])} to a new folder` : `New folder with ${ps.length} files` }),
+    input, change, where, choices,
+    buttons(button('Cancel', '', close), button('Make and move', 'primary', make)),
+  );
+  input.focus();
 }
 
 function newFolderSheet(parent) {
@@ -855,7 +926,7 @@ const prow = (label, note, ...controls) => {
   return r;
 };
 const psec = (title, ...rows) => { const s = el('section', 'psec'); s.append(el('h3', '', { textContent: title }), ...rows); return s };
-function toggle(on, onChange) {
+function switcher(on, onChange) {
   const b = el('button', `switch${on ? ' on' : ''}`, { type: 'button' });
   b.setAttribute('role', 'switch');
   b.setAttribute('aria-checked', String(on));
@@ -875,12 +946,17 @@ function choose(options, value, onChange) {
 async function prefsSections(page) {
   if (page === 'general') return [
     psec('Appearance',
-      prow('Motion', 'Shared with the tray panel.', toggle(pref('motion', 'on') !== 'off', (on) => { keep('motion', on ? 'on' : 'off'); document.documentElement.classList.toggle('still', !on) })),
+      prow('Theme', 'Shared with the tray panel.', choose([['system', 'Same as Windows'], ['light', 'Light'], ['dark', 'Dark']], pref('theme', 'system'), (v) => { keep('theme', v); paintTheme() })),
+      prow('Motion', 'Shared with the tray panel.', switcher(pref('motion', 'on') !== 'off', (on) => { keep('motion', on ? 'on' : 'off'); document.documentElement.classList.toggle('still', !on) })),
     ),
     psec('Grid',
       prow('Videos and GIFs', 'What a tile does under the pointer.', choose([['play', 'Play on hover'], ['still', 'Stay still']], ui.hover, (v) => { ui.hover = v; keep('g-hover', v) })),
-      prow('Group by month', 'With newest or oldest first.', toggle(ui.months === 'on', (on) => { ui.months = on ? 'on' : 'off'; keep('g-months', ui.months); paintGrid() })),
+      prow('Group by month', 'With newest or oldest first.', switcher(ui.months === 'on', (on) => { ui.months = on ? 'on' : 'off'; keep('g-months', ui.months); paintGrid() })),
       prow('Pinned folders', 'Pinned folders sit at the top of the sidebar.', choose([['all', 'Every added folder'], ['pick', 'Only the ones I pin']], ui.pinMode, (v) => { ui.pinMode = v; keep('g-pinmode', v); paintSide() })),
+      prow('Tile sharpness', 'Sharp asks Windows for bigger thumbnails, so tiles look like the saved file. Fast loads big folders quicker.', choose([['sharp', 'Sharp'], ['fast', 'Fast']], ui.quality, (v) => { ui.quality = v; keep('g-quality', v); paintGrid(true) })),
+    ),
+    psec('Viewer',
+      prow('Enhance small photos', 'Photos shown bigger than they were saved are redrawn at screen size and sharpened. The HD button in the viewer does it for one photo. It sharpens edges; it can\'t add detail the file never had.', switcher(ui.hd, (on) => { ui.hd = on; keep('g-hd', on ? 'on' : 'off') })),
     ),
   ];
   if (page === 'folders') {
@@ -1498,7 +1574,7 @@ function onePeek(body, r) {
   const url = r.url || src(r.path);
   const dims = el('span');
   if (r.kind === 'video') {
-    const v = el('video', '', { src: url, muted: true, autoplay: true, loop: true, playsInline: true });
+    const v = el('video', '', { src: url, muted: true, autoplay: true, loop: true, playsInline: true, poster: r.url ? '' : thumb(r) });
     v.onloadedmetadata = () => (dims.textContent = `${v.videoWidth} × ${v.videoHeight}, ${clock(v.duration)}`);
     // The player's bar and buttons show only while the pointer is over the video.
     box.onmouseenter = () => (v.controls = true);
@@ -1509,8 +1585,8 @@ function onePeek(body, r) {
     g.append(icon('music'), el('audio', '', { src: url, controls: true }));
     box.append(g);
   } else {
-    const img = el('img', '', { src: url, alt: r.name, title: 'Open (Enter)' });
-    img.onload = () => (dims.textContent = `${img.naturalWidth} × ${img.naturalHeight}`);
+    const img = el('img', '', { alt: r.name, title: 'Open (Enter)', decoding: 'async' });
+    soon(img, r, url, () => (dims.textContent = `${img.naturalWidth} × ${img.naturalHeight}`));
     img.onclick = () => openViewer(at(), img);
     box.append(img);
   }
@@ -1677,31 +1753,104 @@ const tileMedia = (path) => [...$('grid').querySelectorAll('.tile')].find((t) =>
 const hero = (node) => node && (node.style.viewTransitionName = 'hero');
 const unhero = () => document.querySelectorAll('[style*="view-transition-name"]').forEach((n) => (n.style.viewTransitionName = ''));
 
+// A photo shows at once from its thumbnail, already in memory from the grid, and turns into the
+// file itself once that is decoded, so opening never waits on a blank frame. `full` runs then.
+function soon(img, r, url, full = () => {}) {
+  if (r.kind !== 'image' && r.kind !== 'gif' || url !== src(r.path)) {
+    img.onload = full;
+    img.src = url;
+    return;
+  }
+  img.onerror = () => { img.onerror = null; img.src = url };
+  img.src = thumb(r);
+  const real = new Image();
+  real.src = url;
+  real.decode().catch(() => {}).then(() => {
+    img.onerror = null;
+    img.onload = full;
+    img.src = url;
+  });
+}
+
+// Waits for a picture to be ready to paint, but never long: a View Transition snapshots it next.
+const painted = (m) => Promise.race([m?.decode?.().catch(() => {}), new Promise((ok) => setTimeout(ok, 120))]);
+
+// Only the picture and the viewer's backdrop move; the grid under them stays as it is.
+function viewerSwap(update) {
+  document.documentElement.classList.add('vt-viewer');
+  return swap(update).then(() => { unhero(); document.documentElement.classList.remove('vt-viewer') });
+}
+
 function openViewer(n, from = tileMedia(ui.shown[n]?.path)) {
   if (n < 0 || !ui.shown[n]) return;
   view.list = ui.shown.map((r) => r.path);
   view.at = n;
   hero(from);
-  swap(() => {
+  viewerSwap(async () => {
     unhero();
     $('viewer').hidden = false;
     document.body.classList.add('viewing');
     paintViewer();
-    hero($('stage').querySelector('img,video'));
-  }).then(unhero);
+    const m = media();
+    hero(m);
+    await painted(m);
+  });
 }
 
 function closeViewer() {
   stopShow();
   const path = view.list[view.at];
-  hero($('stage').querySelector('img,video'));
-  swap(() => {
+  hero(media());
+  viewerSwap(() => {
     unhero();
     $('viewer').hidden = true;
     document.body.classList.remove('viewing');
     $('stage').replaceChildren();
+    forgetHd();
     hero(tileMedia(path));
-  }).then(unhero);
+  });
+}
+
+// HD: a photo shown bigger than it was saved is redrawn at the screen's pixels with smooth scaling,
+// then an unsharp mask. Edges get crisp; detail the file never had can't come back.
+const hd = { url: '', on: false };
+const forgetHd = () => { if (hd.url) URL.revokeObjectURL(hd.url); hd.url = ''; hd.on = false; $('v-hd').classList.remove('on') };
+async function enhance(img) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const k = Math.min(img.clientWidth / w, img.clientHeight / h) * devicePixelRatio;
+  if (!(k > 1.15)) return null;
+  // ponytail: one pass on this thread, capped at 8 MP so it stays under a second; a worker lifts the cap.
+  const s = Math.min(k, 4, Math.sqrt(8e6 / (w * h)));
+  const W = Math.round(w * s), H = Math.round(h * s);
+  const bmp = await createImageBitmap(await (await fetch(img.src)).blob());
+  const big = new OffscreenCanvas(W, H), g = big.getContext('2d', { willReadFrequently: true });
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(bmp, 0, 0, W, H);
+  const soft = new OffscreenCanvas(W, H), b = soft.getContext('2d', { willReadFrequently: true });
+  b.filter = `blur(${Math.max(1, s * 0.6).toFixed(1)}px)`;
+  b.drawImage(big, 0, 0);
+  const sharp = g.getImageData(0, 0, W, H), d = sharp.data, blurred = b.getImageData(0, 0, W, H).data;
+  for (let i = 0; i < d.length; i++) if ((i & 3) !== 3) d[i] += 0.7 * (d[i] - blurred[i]); // clamped to 0..255
+  g.putImageData(sharp, 0, 0);
+  return URL.createObjectURL(await big.convertToBlob({ type: /\.png$/i.test(img.src) ? 'image/png' : 'image/jpeg', quality: 0.95 }));
+}
+async function setHd(on, quiet = false) {
+  const img = media(), at = view.at;
+  if (!img || img.tagName !== 'IMG' || item(view.list[at])?.kind !== 'image') return quiet || toast('HD works on photos');
+  if (!on) {
+    if (hd.url) img.src = img.dataset.file;
+    forgetHd();
+    return;
+  }
+  if (!hd.url) {
+    const url = await enhance(img).catch(() => null);
+    if (view.at !== at || !img.isConnected) return url && URL.revokeObjectURL(url);
+    if (!url) return quiet || toast('This photo already shows at its own size or smaller, so it is as sharp as the file');
+    hd.url = url;
+  }
+  img.src = hd.url;
+  hd.on = true;
+  $('v-hd').classList.add('on');
 }
 
 function dropFromViewer(ps) {
@@ -1728,17 +1877,29 @@ function paintViewer() {
     stage.replaceChildren(g);
     $('v-name').textContent = 'Locked file';
     meta(size(r.bytes), base(r.dir));
+    forgetHd();
+    $('v-hd').hidden = true;
     return;
   }
   const kind = o ? o.kind : r.kind, url = o ? o.url : src(r.path);
-  let m;
-  if (kind === 'video') m = el('video', '', { src: url, controls: true, autoplay: true, loop: true });
-  else if (kind === 'audio') m = el('audio', '', { src: url, controls: true, autoplay: true });
-  else m = el('img', '', { src: url, alt: r.name });
-  m.onloadedmetadata = m.onload = () => {
+  forgetHd();
+  const dims = () => {
     const w = m.naturalWidth || m.videoWidth, h = m.naturalHeight || m.videoHeight;
     if (w) meta(`${w} × ${h}`, size(r.bytes), day(r.modified), base(r.dir));
   };
+  let m;
+  if (kind === 'video') m = el('video', '', { src: url, controls: true, autoplay: true, loop: true, poster: o ? '' : thumb(r) });
+  else if (kind === 'audio') m = el('audio', '', { src: url, controls: true, autoplay: true });
+  else {
+    m = el('img', '', { alt: r.name, decoding: 'async' });
+    m.dataset.file = url;
+    soon(m, { ...r, kind }, url, () => {
+      m.onload = null;
+      dims();
+      if (ui.hd && kind === 'image') requestAnimationFrame(() => setHd(true, true));
+    });
+  }
+  m.onloadedmetadata = dims;
   if (kind === 'audio') {
     const g = el('div', 'glyph');
     g.append(icon('music'), m);
@@ -1749,9 +1910,12 @@ function paintViewer() {
   $('v-fav').classList.toggle('on', r.fav);
   $('v-prev').hidden = view.at === 0;
   $('v-next').hidden = view.at >= view.list.length - 1;
-  // The next photo loads ahead.
-  const next = item(view.list[view.at + 1]);
-  if (next?.kind === 'image') new Image().src = src(next.path);
+  $('v-hd').hidden = kind !== 'image';
+  // The photos either side load and decode ahead, so stepping doesn't wait.
+  for (const p of [view.list[view.at + 1], view.list[view.at - 1]]) {
+    const near = item(p);
+    if (near?.kind === 'image' || near?.kind === 'gif') { const i = new Image(); i.src = src(near.path); i.decode().catch(() => {}) }
+  }
 }
 
 function step(by) {
@@ -1773,6 +1937,23 @@ $('stage').addEventListener('wheel', (e) => {
   place2();
 }, { passive: false });
 $('stage').addEventListener('dblclick', () => { view.zoom = view.zoom > 1 ? 1 : 2.5; view.x = view.y = 0; $('stage').classList.toggle('zoomed', view.zoom > 1); place2() });
+// A click on the space around the photo or video closes the viewer, as in Google Photos. A drag
+// that pans a zoomed photo doesn't count.
+let downAt = [0, 0];
+$('stage').addEventListener('pointerdown', (e) => (downAt = [e.clientX, e.clientY]));
+$('stage').addEventListener('click', (e) => {
+  if (Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+  const m = media();
+  if (m ? !onPicture(m, e.clientX, e.clientY) : e.target === $('stage')) closeViewer();
+});
+// Whether a point is on the picture itself, not the bars object-fit leaves beside it.
+function onPicture(m, x, y) {
+  const w = m.naturalWidth || m.videoWidth, h = m.naturalHeight || m.videoHeight, r = m.getBoundingClientRect();
+  if (!w || !h) return true;
+  const s = Math.min(m.offsetWidth / w, m.offsetHeight / h) * view.zoom;
+  const [pw, ph] = view.turn % 180 ? [h * s, w * s] : [w * s, h * s];
+  return Math.abs(x - (r.left + r.width / 2)) <= pw / 2 && Math.abs(y - (r.top + r.height / 2)) <= ph / 2;
+}
 $('stage').addEventListener('pointerdown', (e) => {
   if (view.zoom <= 1 || e.target.tagName !== 'IMG') return;
   const [sx, sy, ox, oy] = [e.clientX, e.clientY, view.x, view.y];
@@ -1796,6 +1977,7 @@ $('v-prev').onclick = () => step(-1);
 $('v-next').onclick = () => step(1);
 $('v-show').onclick = () => (view.show ? stopShow() : startShow());
 $('v-rot').onclick = () => { view.turn += 90; place2() };
+$('v-hd').onclick = () => setHd(!hd.on);
 $('v-fav').onclick = async () => { const r = item(view.list[view.at]); await fav([r.path], !r.fav); paintViewer() };
 $('v-open').onclick = () => act('open', [view.list[view.at]]);
 $('v-reveal').onclick = () => act('reveal', [view.list[view.at]]);
@@ -1810,7 +1992,7 @@ addEventListener('keydown', (e) => {
     const r = item(view.list[view.at]);
     const keys = {
       Escape: closeViewer, ArrowLeft: () => step(-1), ArrowRight: () => step(1), Delete: () => trash([r.path]),
-      f: () => $('v-fav').click(), s: () => $('v-show').click(), r: () => $('v-rot').click(), b: () => blur([r.path], !r.blur).then(paintViewer),
+      f: () => $('v-fav').click(), s: () => $('v-show').click(), r: () => $('v-rot').click(), e: () => $('v-hd').click(), b: () => blur([r.path], !r.blur).then(paintViewer),
     };
     const k = keys[e.key.length === 1 ? e.key.toLowerCase() : e.key];
     if (k) { e.preventDefault(); stopShowUnless(e.key); k() }
@@ -1834,6 +2016,7 @@ addEventListener('keydown', (e) => {
   else if (e.key.toLowerCase() === 'b') act('blur');
   else if (e.key.toLowerCase() === 't') act('tag');
   else if (e.key.toLowerCase() === 'm') act('move');
+  else if (e.key.toLowerCase() === 'n') act('newwith');
   else if (e.key.toLowerCase() === 'l') act('lock');
 });
 const stopShowUnless = (key) => { if (key.toLowerCase() !== 's') stopShow() };

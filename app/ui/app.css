@@ -15,14 +15,22 @@
   --drift: linear(0,0.021,0.073,0.146,0.232,0.324,0.417,0.508,0.594,0.672,0.745,0.806,0.859,0.903,0.94,0.969,0.992,1.009,1.022,1.031,1.036,1.038,1.038,1.037,1.035,1.032,1.029,1.025,1.021,1.018,1.015,1.012,1.009,1.007,1.005,1.003,1);
   --snap: linear(0,0.058,0.182,0.32,0.459,0.582,0.681,0.764,0.829,0.876,0.913,0.94,0.959,0.972,0.982,0.988,0.993,1);
 }
+/* Dark follows Windows unless the gallery's Settings › Theme picks Light or Dark (html data-theme). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme=light]) {
     color-scheme: dark;
     --surface: #18181A; --soft: #202023; --line: #2C2C2F; --ink: #F4F3F1; --muted: #A3A19C;
     --accent: #FF8A3D; --accent-ink: #0F0F10; --pick: #E8B37A; --ok: #3DD68C; --bad: #FF6B5E;
     --glow: rgba(255, 138, 61, .22); --shadow: 0 8px 24px rgba(0, 0, 0, .55);
     --flip-accent: #B84C0C; --flip-bad: #C2362B;
   }
+}
+:root[data-theme=dark] {
+  color-scheme: dark;
+    --surface: #18181A; --soft: #202023; --line: #2C2C2F; --ink: #F4F3F1; --muted: #A3A19C;
+    --accent: #FF8A3D; --accent-ink: #0F0F10; --pick: #E8B37A; --ok: #3DD68C; --bad: #FF6B5E;
+    --glow: rgba(255, 138, 61, .22); --shadow: 0 8px 24px rgba(0, 0, 0, .55);
+    --flip-accent: #B84C0C; --flip-bad: #C2362B;
 }
 
 * { box-sizing: border-box }
