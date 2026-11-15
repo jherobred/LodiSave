@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -152,6 +153,7 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
     var naming by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf(false) }
     var asking by remember { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Saved?>(null) }
     var edited by remember { mutableStateOf<Saved?>(null) } // still shows while the editor slides away
     var show by remember { mutableStateOf<Long?>(null) } // a saved copy to turn to once it loads
@@ -227,10 +229,12 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
             val toggle = { chrome = !chrome }
             val hero = "$from${shown.id}"
             val turn = if (page == pager.currentPage) turns else 0
-            when (shown.kind) {
-                "photo" -> Photo(shown, hero, turn, toggle)
-                "gif" -> Gif(shown, hero, settled, turn, toggle)
-                else -> Player(copy, shown, hero, settled && page == pager.settledPage, chrome && pull.value == 0f, turn, toggle)
+            FromDrive(copy, shown, hero, toggle) {
+                when (shown.kind) {
+                    "photo" -> Photo(shown, hero, turn, toggle)
+                    "gif" -> Gif(shown, hero, settled, turn, toggle)
+                    else -> Player(copy, shown, hero, settled && page == pager.settledPage, chrome && pull.value == 0f, turn, toggle)
+                }
             }
         }
 
@@ -256,16 +260,20 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
             val it = item ?: return@AnimatedVisibility
             Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Scrim))).navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
                 // Turned: keep it that way as a copy, or leave it, and it turns back.
-                if (turns != 0 && !it.trashed) {
+                if (turns != 0 && !it.trashed && it.cloud.isEmpty()) {
                     if (saving) Meter(-1f, Modifier.width(120.dp).padding(bottom = 4.dp))
                     else Pill(copy.saveTurned, { saveTurned(it) }, Modifier.padding(bottom = 4.dp))
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                    if (it.trashed) {
+                    if (it.cloud.isNotEmpty()) {
+                        // Only in Drive: it can come back to the phone, and turn for a look.
+                        RoundButton(Glyph.Saves, copy.download, { downloadFromDrive(scope, ctx, copy, listOf(it)) { m, _ -> done(m) } }, tint = Color.White, fill = Glass)
+                        if (it.kind != "audio") RoundButton(Glyph.Rotate, copy.rotate, { turns = (turns + 1) % 4 }, tint = if (turns != 0) Dark.accent else Color.White, fill = Glass)
+                    } else if (it.trashed) {
                         RoundButton(Glyph.Restore, copy.restore, { scope.launch { Library.each(listOf(it)) { s -> Library.trash(ctx, s, false) }; done(copy.restored(1)) } }, tint = Color.White, fill = Glass)
                         RoundButton(Glyph.Trash, copy.deleteForever, { asking = true }, tint = Dark.bad, fill = Glass)
                     } else {
-                        RoundButton(Glyph.Share, copy.share, { share(ctx, listOf(it)) }, tint = Color.White, fill = Glass)
+                        RoundButton(Glyph.Share, copy.share, { sharing = true }, tint = Color.White, fill = Glass)
                         RoundButton(if (it.favorite) Glyph.HeartFull else Glyph.Heart, if (it.favorite) copy.unfavorite else copy.favorite,
                             { scope.launch { Library.each(listOf(it)) { s -> Library.favorite(ctx, s, !it.favorite) } } }, tint = if (it.favorite) Dark.accent else Color.White, fill = Glass)
                         if (it.kind != "audio") RoundButton(Glyph.Rotate, copy.rotate, { turns = (turns + 1) % 4 }, tint = if (turns != 0) Dark.accent else Color.White, fill = Glass)
@@ -313,7 +321,7 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
         }
     }
 
-    if (sounds) SoundPicker(copy, remember(all) { all.values.filter { !it.trashed && (it.kind == "video" || it.kind == "audio") }.sortedByDescending { it.added } }) { sounds = false }
+    if (sounds) SoundPicker(copy, remember(all) { all.values.filter { !it.trashed && it.cloud.isEmpty() && (it.kind == "video" || it.kind == "audio") }.sortedByDescending { it.added } }) { sounds = false }
     if (info) item?.let { InfoSheet(copy, it) { info = false } }
     if (naming) item?.let { it ->
         NameDialog(copy, copy.rename, it.name.substringBeforeLast('.'), { naming = false }, hint = copy.infoName) { typed ->
@@ -331,10 +339,35 @@ private fun Shown(copy: Copy, start: List<Long>, at: Int, trash: Boolean, from: 
             }
         }
     }
+    if (sharing) item?.let { it -> ShareConfirm(copy, listOf(it), { sharing = false }) { sharing = false; share(ctx, listOf(it)) } }
     if (asking) item?.let { it ->
         Confirm(copy, copy.forGood(1), { asking = false }) {
             asking = false
             scope.launch { Library.each(listOf(it)) { s -> Library.delete(ctx, s) } }
+        }
+    }
+}
+
+/** A file only in Drive comes down to the phone's cache first, its thumbnail showing meanwhile, and
+ *  then shows as any other. */
+@Composable
+private fun FromDrive(copy: Copy, item: Saved, hero: String, onTap: () -> Unit, content: @Composable () -> Unit) {
+    if (item.cloud.isEmpty()) return content()
+    val ctx = LocalContext.current
+    var got by remember(item.id) { mutableStateOf(if (Drive.cached(ctx, item.cloud).exists()) 100f else 0f) } // -1 when it couldn't
+    LaunchedEffect(item.id) {
+        if (got >= 100f) return@LaunchedEffect
+        got = withContext(Dispatchers.IO) {
+            runCatching { Drive.fetch(ctx, Drive.quickToken(ctx) ?: error("no token"), item) { p -> got = p.coerceAtMost(99f) } }.fold({ 100f }, { -1f })
+        }
+    }
+    if (got >= 100f) return content()
+    val thumb = rememberThumb(item)
+    Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onTap() } }, contentAlignment = Alignment.Center) {
+        Hero(hero, Modifier.aspectRatio(ratioOf(item, thumb))) { thumb?.let { Image(it, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
+        Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 120.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (got < 0) Text(copy.driveCantReach, color = Color.White, fontFamily = Geist, fontSize = 14.sp, modifier = Modifier.clip(CircleShape).background(Scrim).padding(horizontal = 14.dp, vertical = 8.dp))
+            else Meter(if (got > 0f) got else -1f, Modifier.width(160.dp))
         }
     }
 }
@@ -590,7 +623,7 @@ private fun InfoSheet(copy: Copy, item: Saved, onDismiss: () -> Unit) {
                 copy.infoFile to sizeText(item.bytes),
                 copy.infoSaved to DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(item.added * 1000)),
                 copy.infoAlbum to item.album.ifEmpty { copy.noAlbum },
-                copy.infoFolder to item.path,
+                copy.infoFolder to item.path.ifEmpty { if (item.cloud.isNotEmpty()) "Google Drive" else "" },
             )
             for ((label, value) in rows) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(label, Modifier.width(96.dp), fontFamily = Geist, fontSize = 14.sp, color = t.muted)

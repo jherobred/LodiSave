@@ -93,7 +93,10 @@ object Drive {
     }
 
     /** A token without asking, or null when the user has to say yes first, in the app. */
-    suspend fun token(ctx: Context): String? = authorize(ctx).getOrNull()?.takeIf { !it.hasResolution() }?.accessToken
+    suspend fun token(ctx: Context): String? = authorize(ctx).getOrNull()?.takeIf { !it.hasResolution() }?.accessToken?.also { connected(ctx) }
+
+    /** Notes that Drive is connected, so the Gallery lists what's in it. */
+    fun connected(ctx: Context) { if (!file(ctx).exists()) edit(ctx) {} }
 
     // What's in Drive, in LodiSave's private files: {"folder": id, "done": {mediaId: {"file", "at", "size"}}, "queue": [mediaId]}.
     private fun file(ctx: Context) = File(ctx.filesDir, "drive.json")
@@ -179,7 +182,8 @@ object Drive {
         start.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
         start.setRequestProperty("X-Upload-Content-Type", item.mime)
         start.setRequestProperty("X-Upload-Content-Length", "${item.bytes}")
-        start.outputStream.use { it.write(JSONObject().put("name", item.name).put("parents", JSONArray().put(folder)).toString().encodeToByteArray()) }
+        start.outputStream.use { it.write(JSONObject().put("name", item.name).put("parents", JSONArray().put(folder))
+            .apply { if (item.added > 0) put("modifiedTime", java.time.Instant.ofEpochSecond(item.added).toString()) }.toString().encodeToByteArray()) }
         start.answer()
         val session = start.getHeaderField("Location") ?: throw DriveError(0, "no upload session")
         val put = open(session, token, "PUT")
@@ -190,6 +194,144 @@ object Drive {
         val done = put.answer()
         if (done.optString("size").toLongOrNull() != item.bytes) throw DriveError(0, "size")
         return done.getString("id").also { finished(ctx, item, it) }
+    }
+
+    // The photos and videos in Drive as Drive last listed them, for showing beside the phone's own.
+    private fun cloudFile(ctx: Context) = File(ctx.filesDir, "drive-cloud.json")
+    @Volatile private var listed = 0L
+    @Volatile private var fresh: Pair<String, Long>? = null
+    private val links = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** Whether Drive was ever connected or used here, so the app asks Google for a token at all. */
+    fun used(ctx: Context) = file(ctx).exists() || cloudFile(ctx).exists()
+
+    /** A token without asking, kept for most of the hour Google's last, for the many thumbnails at once. */
+    suspend fun quickToken(ctx: Context): String? {
+        fresh?.let { (token, until) -> if (System.currentTimeMillis() < until) return token }
+        return token(ctx)?.also { fresh = it to System.currentTimeMillis() + 45 * 60_000 }
+    }
+
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+
+    /** Lists again every photo and video LodiSave put in Drive, from this phone or a PC (drive.file shows
+     *  nothing else), at most once a minute unless `now`. */
+    suspend fun refreshCloud(ctx: Context, now: Boolean = false) {
+        if (!used(ctx) || !now && System.currentTimeMillis() - listed < 60_000) return
+        val token = quickToken(ctx) ?: return
+        listed = System.currentTimeMillis()
+        val q = "trashed=false and (mimeType contains 'image/' or mimeType contains 'video/')"
+        val fields = "nextPageToken,files(id,name,mimeType,size,modifiedTime,thumbnailLink,imageMediaMetadata(width,height),videoMediaMetadata(width,height,durationMillis))"
+        val found = JSONArray()
+        var page = ""
+        do {
+            val c = open("$FILES?pageSize=1000&spaces=drive&q=${enc(q)}&fields=${enc(fields)}" + (if (page.isEmpty()) "" else "&pageToken=${enc(page)}"), token, "GET")
+            val answer = runCatching { c.answer() }.getOrElse { if (it is DriveError && it.code == 401) fresh = null; return }
+            answer.optJSONArray("files")?.let { f -> for (i in 0 until f.length()) found.put(f.getJSONObject(i)) }
+            page = answer.optString("nextPageToken")
+        } while (page.isNotEmpty())
+        synchronized(this) { File(ctx.filesDir, "drive-cloud.part").apply { writeText(found.toString()) }.renameTo(cloudFile(ctx)) }
+    }
+
+    /** The files in Drive that aren't on the phone: sent from elsewhere, or sent from here and since
+     *  gone from it. `phone` is every MediaStore id the phone has. */
+    fun onlyInCloud(ctx: Context, phone: Set<Long>): List<Saved> {
+        val list = synchronized(this) { runCatching { JSONArray(cloudFile(ctx).readText()) }.getOrNull() } ?: return emptyList()
+        val done = read(ctx).optJSONObject("done")
+        val here = done?.keys()?.asSequence()?.filter { it.toLongOrNull()?.let(phone::contains) == true }?.map { done.getJSONObject(it).optString("file") }?.toSet().orEmpty()
+        return (0 until list.length()).map(list::getJSONObject).filter { it.optString("id") !in here }.mapNotNull { saved(ctx, it) }.sortedByDescending { it.added }
+    }
+
+    private fun saved(ctx: Context, j: JSONObject): Saved? {
+        val id = j.optString("id").ifEmpty { return null }
+        j.optString("thumbnailLink").takeIf { it.isNotEmpty() }?.let { links[id] = it }
+        val video = j.optJSONObject("videoMediaMetadata")
+        val size = j.optJSONObject("imageMediaMetadata") ?: video
+        val time = runCatching { java.time.Instant.parse(j.optString("modifiedTime")).epochSecond }.getOrDefault(0L)
+        return Saved(
+            android.net.Uri.fromFile(cached(ctx, id)), j.optString("name"), j.optString("mimeType"), j.optString("size").toLongOrNull() ?: 0, time,
+            idOf(id), size?.optInt("width") ?: 0, size?.optInt("height") ?: 0, video?.optString("durationMillis")?.toLongOrNull() ?: 0, cloud = id,
+        )
+    }
+
+    /** A stable id for a Drive file among the phone's: negative and far from any [Thumbs] key, which
+     *  keeps a big thumbnail under -id - 1. */
+    fun idOf(driveId: String): Long {
+        var h = -0x340d631b7bdddcdbL // FNV-1a 64
+        for (c in driveId) { h = h xor c.code.toLong(); h *= 0x100000001b3L }
+        return -((h ushr 4) or (1L shl 59))
+    }
+
+    /** Where the viewer keeps a Drive file it opened. */
+    fun cached(ctx: Context, driveId: String) = File(File(ctx.cacheDir, "drive"), driveId)
+
+    /** Drive's own small picture of a file, `side` pixels, kept in the cache; else from the whole file
+     *  once the viewer has it. */
+    suspend fun thumb(ctx: Context, item: Saved, side: Int): android.graphics.Bitmap? = withContext(Dispatchers.IO) {
+        val f = File(ctx.cacheDir, "drive-thumbs/${item.cloud}-$side.jpg")
+        // The token goes only to Google's own picture server.
+        if (!f.exists()) links[item.cloud]?.takeIf { runCatching { java.net.URI(it).host.endsWith(".googleusercontent.com") }.getOrDefault(false) }?.let { link ->
+            runCatching {
+                val token = quickToken(ctx) ?: return@runCatching
+                val sized = Regex("""=s\d+$""").replace(link, "") + "=s$side"
+                val c = open(sized, token, "GET")
+                if (c.responseCode != 200) return@runCatching
+                f.parentFile?.mkdirs()
+                val part = File(f.path + ".part")
+                c.inputStream.use { input -> part.outputStream().use { input.copyTo(it) } }
+                part.renameTo(f)
+            }
+        }
+        if (f.exists()) return@withContext android.graphics.BitmapFactory.decodeFile(f.path)
+        val whole = cached(ctx, item.cloud).takeIf { it.exists() } ?: return@withContext null
+        runCatching {
+            if (item.mime.startsWith("video/")) android.media.ThumbnailUtils.createVideoThumbnail(whole, android.util.Size(side, side), null)
+            else android.media.ThumbnailUtils.createImageThumbnail(whole, android.util.Size(side, side), null)
+        }.getOrNull()
+    }
+
+    /** Brings a whole Drive file into the cache for the viewer, keeping the cache under a gigabyte by
+     *  letting the longest-unopened go. `progress` hears 0 to 100. */
+    fun fetch(ctx: Context, token: String, item: Saved, progress: (Float) -> Unit = {}): File {
+        val f = cached(ctx, item.cloud)
+        if (f.exists()) return f.also { it.setLastModified(System.currentTimeMillis()) }
+        f.parentFile?.mkdirs()
+        val c = open("$FILES/${enc(item.cloud)}?alt=media", token, "GET")
+        if (c.responseCode !in 200..299) throw DriveError(c.responseCode, "download")
+        val part = File(f.path + ".part")
+        c.inputStream.use { input ->
+            part.outputStream().use { out ->
+                val buf = ByteArray(1 shl 16)
+                var got = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    got += n
+                    if (item.bytes > 0) progress(got * 100f / item.bytes)
+                }
+            }
+        }
+        part.renameTo(f)
+        val kept = f.parentFile?.listFiles()?.filter { !it.name.endsWith(".part") }?.sortedByDescending { it.lastModified() }.orEmpty()
+        var total = 0L
+        for (k in kept) { total += k.length(); if (total > 1L shl 30 && k != f) k.delete() }
+        return f
+    }
+
+    /** Puts a Drive file back on the phone, in LodiSave's folder in Pictures or Movies, dated as Drive
+     *  has it, and notes that the phone has it again so it shows once. */
+    fun download(ctx: Context, token: String, item: Saved) {
+        val whole = fetch(ctx, token, item)
+        val uri = Saver.publish(ctx, item.name, item.mime) { out -> whole.inputStream().use { it.copyTo(out) } }
+        if (item.added > 0) runCatching {
+            ctx.contentResolver.update(uri, android.content.ContentValues().apply { put(android.provider.MediaStore.MediaColumns.DATE_TAKEN, item.added * 1000) }, null, null)
+        }
+        val id = android.content.ContentUris.parseId(uri)
+        edit(ctx) { j ->
+            val done = j.optJSONObject("done") ?: JSONObject()
+            done.put("$id", JSONObject().put("file", item.cloud).put("at", System.currentTimeMillis() / 1000).put("size", whole.length()))
+            j.put("done", done)
+        }
     }
 }
 
@@ -369,6 +511,7 @@ fun rememberDriveConnect(onFail: (String) -> Unit): ((Boolean) -> Unit) -> Unit 
     var then by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         val token = runCatching { Identity.getAuthorizationClient(ctx).getAuthorizationResultFromIntent(r.data).accessToken }.getOrNull()
+        if (token != null) Drive.connected(ctx)
         then?.invoke(token != null)
         then = null
     }
@@ -377,7 +520,7 @@ fun rememberDriveConnect(onFail: (String) -> Unit): ((Boolean) -> Unit) -> Unit 
             Drive.authorize(ctx).onSuccess { a ->
                 val intent = a.pendingIntent
                 if (a.hasResolution() && intent != null) { then = next; ask.launch(IntentSenderRequest.Builder(intent.intentSender).build()) }
-                else next(true)
+                else { Drive.connected(ctx); next(true) }
             }.onFailure { onFail(it.message ?: "Google Drive") }
         }
     }

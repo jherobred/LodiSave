@@ -2,6 +2,9 @@
 // merge(video, audio) joins a video-only and an audio-only stream into one file with both tracks.
 // clean(bytes) keeps one continuous run of a single-track stream, dropping repeated init segments.
 // repair(bytes) fixes a file an older LodiSave joined: looped fragments, video starting after audio.
+// flatten(bytes) turns fragmented MP4 into a plain MP4, which is what merge, clean and repair give:
+// one index up front with each track's real length. Windows' own player takes a fragmented file's
+// length from the site's stream header and plays such files badly; Chromium players don't.
 // Pure byte work with no dependencies, so the extension and the Android WebView can both run it.
 // Both return null when the input isn't fragmented MP4.
 var LodiMP4 = (() => {
@@ -210,7 +213,7 @@ var LodiMP4 = (() => {
     return out;
   }
 
-  function merge(video, audio) {
+  function joinFragments(video, audio) {
     const v = parse(video), a = parse(audio);
     if (!v || !a) return null;
     const movieScale = timescale(v.b, v.mvhd);
@@ -240,7 +243,7 @@ var LodiMP4 = (() => {
     return concat(parts);
   }
 
-  function clean(bytes) {
+  function cleanFragments(bytes) {
     const s = parse(bytes);
     if (!s) return null;
     const parts = [s.ftyp ? s.b.slice(s.ftyp.start, s.ftyp.end) : new Uint8Array(0), s.b.slice(s.moov.start, s.moov.end)];
@@ -263,7 +266,8 @@ var LodiMP4 = (() => {
 
   // A file saved by an older LodiSave, whose joiner kept looped fragments and let the video start
   // seconds after the audio: its tracks are split back into the streams the player fed and joined
-  // again. Null when it isn't fragmented MP4 or nothing changes.
+  // again. Any fragmented MP4 comes back as a plain one, which Windows' own player times right.
+  // Null when it isn't fragmented MP4 or nothing changes.
   function repair(b) {
     const top = boxes(b), ftyp = top.find((x) => x.type === 'ftyp'), moov = top.find((x) => x.type === 'moov');
     const mvex = moov && child(b, moov, 'mvex');
@@ -289,13 +293,208 @@ var LodiMP4 = (() => {
       });
       return n ? { bytes: concat(parts), kind: handler(trak) } : null;
     });
-    if (!streams.length || streams.some((s) => !s)) return null;
-    const video = streams.find((s) => s.kind === 'vide'), audio = streams.find((s) => s.kind === 'soun');
-    const out = streams.length === 1 ? clean(streams[0].bytes) : streams.length === 2 && video && audio ? merge(video.bytes, audio.bytes) : null;
+    const ok = streams.length && !streams.some((s) => !s);
+    const video = ok && streams.find((s) => s.kind === 'vide'), audio = ok && streams.find((s) => s.kind === 'soun');
+    const joined = !ok ? null : streams.length === 1 ? cleanFragments(streams[0].bytes) : streams.length === 2 && video && audio ? joinFragments(video.bytes, audio.bytes) : null;
+    const out = flatten(joined || b) || joined;
     if (!out || out.length === b.length && out.every((v, i) => v === b[i])) return null;
     return out;
   }
 
-  return { merge, clean, repair, fragmented };
+  // ---- Plain MP4 ----
+  // Each track's samples are gathered from its fragments in file order. A fragment's decode time
+  // closes a gap or overlap by stretching or shortening the sample before it, so the tracks stay in
+  // step. When each track starts goes into its composition offsets, with no edit list. Samples go
+  // into the mdat in half-second chunks, the tracks interleaved by time, and the moov goes first so
+  // a player can start at once.
+  const u24 = (b, o) => (b[o] << 16) | (b[o + 1] << 8) | b[o + 2];
+  const words = (list) => { const o = new Uint8Array(list.length * 4); list.forEach((v, i) => put32(o, i * 4, v)); return o };
+  const full = (type, version, parts) => make(type, [Uint8Array.of(version, 0, 0, 0), ...parts]);
+  const text = (b, o) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
+  const ascii = (str) => Uint8Array.from(str, (c) => c.charCodeAt(0));
+
+  function flatten(b) {
+    const top = boxes(b), moov = top.find((x) => x.type === 'moov'), mvex = moov && child(b, moov, 'mvex');
+    if (!mvex || child(b, moov, 'pssh')) return null;
+    const mvhd = child(b, moov, 'mvhd'), trexes = kids(b, mvex).filter((k) => k.type === 'trex');
+    if (!mvhd) return null;
+    const tracks = [];
+    for (const trak of kids(b, moov).filter((k) => k.type === 'trak')) {
+      const tkhd = child(b, trak, 'tkhd'), mdia = child(b, trak, 'mdia'), mdhd = child(b, mdia, 'mdhd'), hdlr = child(b, mdia, 'hdlr');
+      const stbl = child(b, child(b, mdia, 'minf'), 'stbl'), stsd = child(b, stbl, 'stsd');
+      if (!tkhd || !mdhd || !stbl || !stsd) return null;
+      const id = u32(b, body(tkhd) + (b[body(tkhd)] === 1 ? 20 : 12)), trex = trexes.find((t) => u32(b, body(t) + 4) === id);
+      const entry = text(b, body(stsd) + 12);
+      if (!trex || entry === 'encv' || entry === 'enca') return null;
+      // The media time of the first edit that isn't empty: an audio encoder's delay.
+      let m = 0;
+      const elst = child(b, child(b, trak, 'edts'), 'elst');
+      if (elst) {
+        const v1 = b[body(elst)] === 1, n = u32(b, body(elst) + 4);
+        for (let i = 0, q = body(elst) + 8; i < n && q < elst.end; i++, q += v1 ? 20 : 12) {
+          const t = v1 ? (u32(b, q + 8) >= 0x80000000 ? -1 : u64(b, q + 8)) : u32(b, q + 4) | 0;
+          if (t >= 0) { m = t; break }
+        }
+      }
+      tracks.push({
+        trak, stbl, stsd, id, entry, m, scale: timescale(b, mdhd), samples: [], next: 0,
+        sound: !!hdlr && text(b, body(hdlr) + 8) === 'soun',
+        def: { sdi: u32(b, body(trex) + 8), dur: u32(b, body(trex) + 12), size: u32(b, body(trex) + 16), flags: u32(b, body(trex) + 20) },
+      });
+    }
+    for (const moof of top.filter((x) => x.type === 'moof')) {
+      let prevEnd = null;
+      for (const traf of kids(b, moof).filter((k) => k.type === 'traf')) {
+        const tfhd = child(b, traf, 'tfhd');
+        if (!tfhd) continue;
+        const p = body(tfhd), fl = u24(b, p + 1), tr = tracks.find((t) => t.id === u32(b, p + 4));
+        if (!tr) continue;
+        let o = p + 8, base = moof.start, { sdi, dur: dd, size: ds, flags: df } = tr.def;
+        if (fl & 1) { base = u64(b, o); o += 8 } else if (!(fl & 0x20000) && prevEnd !== null) base = prevEnd;
+        if (fl & 2) { sdi = u32(b, o); o += 4 }
+        if (fl & 8) { dd = u32(b, o); o += 4 }
+        if (fl & 0x10) { ds = u32(b, o); o += 4 }
+        if (fl & 0x20) df = u32(b, o);
+        const tfdt = child(b, traf, 'tfdt'), last = tr.samples[tr.samples.length - 1];
+        let t = tfdt ? (b[body(tfdt)] === 1 ? u64(b, body(tfdt) + 4) : u32(b, body(tfdt) + 4)) : tr.next;
+        if (last && t > last.dts) last.dur = t - last.dts;
+        else if (last) t = last.dts + last.dur;
+        let pos = base;
+        for (const trun of kids(b, traf).filter((k) => k.type === 'trun')) {
+          const q = body(trun), v = b[q], rf = u24(b, q + 1), n = u32(b, q + 4);
+          let r = q + 8, first = null;
+          if (rf & 1) { pos = base + (u32(b, r) | 0); r += 4 }
+          if (rf & 4) { first = u32(b, r); r += 4 }
+          for (let i = 0; i < n; i++) {
+            let dur = dd, size = ds, flags = i === 0 && first !== null ? first : df, cto = 0;
+            if (rf & 0x100) { dur = u32(b, r); r += 4 }
+            if (rf & 0x200) { size = u32(b, r); r += 4 }
+            if (rf & 0x400) { flags = u32(b, r); r += 4 }
+            if (rf & 0x800) { cto = v ? u32(b, r) | 0 : u32(b, r); r += 4 }
+            if (r > trun.end || pos < 0 || pos + size > b.length) break; // a cut-off file ends here
+            tr.samples.push({ dts: t, dur, size, pos, sync: !(flags & 0x10000), cto, sdi });
+            t += dur;
+            pos += size;
+          }
+        }
+        tr.next = t;
+        prevEnd = pos;
+      }
+    }
+    const live = tracks.filter((t) => t.samples.length);
+    if (!live.length) return null;
+
+    // Times go into the composition offsets alone, and none is negative, so every player reads them
+    // the same way (dts + cto) without an edit list. Windows' player ignores empty edits and edit
+    // media times in a plain file, ffmpeg (so Chromium) drops a gap at the start of an edit and
+    // guesses a B-frame delay without one. A track keeps when it starts (its first decode time) less
+    // an audio encoder's delay (its edit list's media time), and the whole movie moves later by the
+    // least that keeps every offset at 0 or more: the encoder delay, or a B-frame delay.
+    const M = timescale(b, mvhd);
+    if (!M || live.some((t) => !t.scale)) return null;
+    for (const tr of live) {
+      tr.media = tr.samples.reduce((n, s) => n + s.dur, 0);
+      tr.m = Math.min(tr.m, tr.samples[0].dts + tr.media);
+      tr.need = tr.m - tr.samples[0].dts - tr.samples.reduce((n, s) => Math.min(n, s.cto), Infinity);
+    }
+    const most = live.reduce((a, t) => (t.need * a.scale > a.need * t.scale ? t : a));
+    for (const tr of live) {
+      const late = most.need <= 0 ? 0 : tr === most ? most.need : Math.floor((most.need * tr.scale + most.scale - 1) / most.scale);
+      const shift = tr.samples[0].dts - tr.m + late;
+      let t = 0, end = 0;
+      for (const s of tr.samples) { s.cto += shift; end = Math.max(end, t + s.cto + s.dur); t += s.dur }
+      tr.length = Math.floor((end * M + Math.floor(tr.scale / 2)) / tr.scale); // in the movie's timescale
+    }
+    // Half-second chunks, interleaved by decode time; the earlier track wins a tie.
+    const chunks = [];
+    live.forEach((tr, k) => {
+      tr.chunks = [];
+      let c = null;
+      for (const s of tr.samples) {
+        if (!c || 2 * (s.dts - c.t) >= tr.scale || s.sdi !== c.sdi) tr.chunks.push(c = { k, tr, t: s.dts, sdi: s.sdi, samples: [], bytes: 0, at: 0 });
+        c.samples.push(s);
+        c.bytes += s.size;
+      }
+      chunks.push(...tr.chunks);
+    });
+    chunks.sort((x, y) => x.t * y.tr.scale - y.t * x.tr.scale || x.k - y.k);
+    const payload = chunks.reduce((n, c) => n + c.bytes, 0);
+    let big = false; // past 4 GB the mdat needs a 64-bit size and co64 offsets
+
+    const rle = (list) => {
+      const out = [];
+      for (const v of list) out.length && out[out.length - 1][1] === v ? out[out.length - 1][0]++ : out.push([1, v]);
+      return out;
+    };
+    // A copy of a full box with a length field set: at32 in version 0, at64 in version 1.
+    const withLength = (x, at32, at64, v) => {
+      const out = b.slice(x.start, x.end), p = x.head;
+      if (out[p] === 1) put64(out, p + at64, v);
+      else put32(out, p + at32, Math.min(v, 0xffffffff));
+      return out;
+    };
+    const stbl = (tr) => {
+      const s = tr.samples, durs = rle(s.map((x) => x.dur)), parts = [b.slice(tr.stsd.start, tr.stsd.end)];
+      parts.push(full('stts', 0, [words([durs.length, ...durs.flat()])]));
+      if (s.some((x) => x.cto)) {
+        const ctos = rle(s.map((x) => x.cto));
+        parts.push(full('ctts', s.some((x) => x.cto < 0) ? 1 : 0, [words([ctos.length, ...ctos.flatMap(([n, v]) => [n, v >>> 0])])]));
+      }
+      if (!tr.sound && s.some((x) => !x.sync)) {
+        const keys = s.flatMap((x, i) => (x.sync ? [i + 1] : []));
+        parts.push(full('stss', 0, [words([keys.length, ...keys])]));
+      }
+      const size = s[0].size;
+      parts.push(full('stsz', 0, [words(s.every((x) => x.size === size) ? [size, s.length] : [0, s.length, ...s.map((x) => x.size)])]));
+      const stsc = [];
+      tr.chunks.forEach((c, i) => {
+        const prev = stsc[stsc.length - 1];
+        if (!prev || prev[1] !== c.samples.length || prev[2] !== c.sdi) stsc.push([i + 1, c.samples.length, c.sdi]);
+      });
+      parts.push(full('stsc', 0, [words([stsc.length, ...stsc.flat()])]));
+      if (big) {
+        const o = new Uint8Array(4 + tr.chunks.length * 8);
+        put32(o, 0, tr.chunks.length);
+        tr.chunks.forEach((c, i) => put64(o, 4 + i * 8, c.at));
+        parts.push(full('co64', 0, [o]));
+      } else parts.push(full('stco', 0, [words([tr.chunks.length, ...tr.chunks.map((c) => c.at)])]));
+      for (const k of kids(b, tr.stbl)) if (!/^(stsd|stts|ctts|stss|stsz|stz2|stsc|stco|co64|sbgp)$/.test(k.type)) parts.push(b.slice(k.start, k.end));
+      return make('stbl', parts);
+    };
+    const trak = (tr) => make('trak', kids(b, tr.trak).flatMap((k) => {
+      if (k.type === 'tkhd') return [withLength(k, 20, 28, tr.length)];
+      if (k.type === 'edts') return [];
+      if (k.type !== 'mdia') return [b.slice(k.start, k.end)];
+      return [make('mdia', kids(b, k).map((x) => x.type === 'mdhd' ? withLength(x, 16, 24, tr.media)
+        : x.type === 'minf' ? make('minf', kids(b, x).map((y) => (y.type === 'stbl' ? stbl(tr) : b.slice(y.start, y.end))))
+          : b.slice(x.start, x.end)))];
+    }));
+    const movie = () => make('moov', kids(b, moov).flatMap((k) => {
+      if (k.type === 'mvhd') return [withLength(k, 16, 24, Math.max(...live.map((t) => t.length)))];
+      if (k.type === 'trak') { const tr = live.find((t) => t.trak.start === k.start); return tr ? [trak(tr)] : [] }
+      return k.type === 'mvex' || k.type === 'pssh' ? [] : [b.slice(k.start, k.end)];
+    }));
+    const brands = ['isom', 'iso2', ...(live.some((t) => t.entry === 'avc1') ? ['avc1'] : []), 'mp41'];
+    const ftyp = make('ftyp', [ascii('isom'), words([512]), ...brands.map(ascii)]);
+    big = ftyp.length + movie().length + 8 + payload > 0xffffffff;
+    const head = big ? 16 : 8;
+    let at = ftyp.length + movie().length + head; // the moov's size doesn't depend on the offsets
+    for (const c of chunks) { c.at = at; at += c.bytes }
+    const moovOut = movie(), out = new Uint8Array(at);
+    out.set(ftyp, 0);
+    out.set(moovOut, ftyp.length);
+    let o = ftyp.length + moovOut.length;
+    if (big) { put32(out, o, 1); out.set(ascii('mdat'), o + 4); put64(out, o + 8, payload + 16) } else { put32(out, o, payload + 8); out.set(ascii('mdat'), o + 4) }
+    o += head;
+    for (const c of chunks) for (const s of c.samples) { out.set(b.subarray(s.pos, s.pos + s.size), o); o += s.size }
+    return out;
+  }
+
+  // A plain MP4 when one can be made, else the fragmented file.
+  const plain = (x) => x && (flatten(x) || x);
+  const merge = (video, audio) => plain(joinFragments(video, audio));
+  const clean = (bytes) => plain(cleanFragments(bytes));
+
+  return { merge, clean, repair, fragmented, flatten, joinFragments };
 })();
 if (typeof module !== 'undefined') module.exports = LodiMP4;

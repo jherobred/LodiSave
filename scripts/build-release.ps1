@@ -8,9 +8,13 @@
 # Steps: build the app, build the uninstaller (the installer crate without a payload), stage
 # everything to install, then build the installer with the staged files inside.
 #
-# Usage: pwsh -File scripts/build-release.ps1 [-SkipApp] [-SkipAndroid]
+# Usage: pwsh -File scripts/build-release.ps1 [-SkipApp] [-SkipAndroid] [-NoDrive]
+#
+# Google Drive on PC needs Google's sign-in client ("Desktop app" type) built in, from
+# LODISAVE_GOOGLE_CLIENT_ID and LODISAVE_GOOGLE_CLIENT_SECRET. -NoDrive builds without it, and
+# the app then shows Drive as coming later.
 
-param([switch]$SkipApp, [switch]$SkipAndroid)
+param([switch]$SkipApp, [switch]$SkipAndroid, [switch]$NoDrive)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -24,6 +28,10 @@ function Invoke-Native([string]$what, [scriptblock]$block) {
   Write-Host "==> $what"
   & $block
   if ($LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)" }
+}
+
+if (-not $SkipApp -and -not $NoDrive -and -not ($env:LODISAVE_GOOGLE_CLIENT_ID -and $env:LODISAVE_GOOGLE_CLIENT_SECRET)) {
+  throw "LODISAVE_GOOGLE_CLIENT_ID and LODISAVE_GOOGLE_CLIENT_SECRET aren't set, so Drive wouldn't work on PC. Set them, or pass -NoDrive."
 }
 
 if (-not $SkipApp) {

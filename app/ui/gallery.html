@@ -28,6 +28,8 @@
   <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M4 4l16 16M10.4 5.7A9 9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 0 1-3 3.7M6.6 6.9C4 8.6 2.5 12 2.5 12S6 18.5 12 18.5c1.8 0 3.3-.5 4.6-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
   <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 5 3.5 3.5V14h-11v-1.5L10 9z"/><path d="M12 14v6"/></symbol>
   <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.5 12.2V5a1.5 1.5 0 0 1 1.5-1.5h7.2l8.3 8.3a1.5 1.5 0 0 1 0 2.1l-7 7a1.5 1.5 0 0 1-2.1 0z"/><circle cx="8.3" cy="8.3" r="1.4"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M6 12H5.5A1.5 1.5 0 0 0 4 13.5v5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-5a1.5 1.5 0 0 0-1.5-1.5H18"/></symbol>
+  <symbol id="i-get" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
   <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18.5a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.5 1.6A3.8 3.8 0 0 1 17.5 18.5z"/></symbol>
   <symbol id="i-twins" viewBox="0 0 24 24"><rect x="3.5" y="6" width="10" height="13" rx="2.5"/><path d="M10.5 3.5h7.5a2.5 2.5 0 0 1 2.5 2.5v10"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
@@ -111,6 +113,7 @@
       <button type="button" class="icon" id="refresh" title="Refresh (F5)"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg></button>
     </div>
     <div class="scroll" id="scroll">
+      <div id="looks" hidden></div>
       <div class="empty" id="empty" hidden></div>
       <div id="grid"></div>
       <div id="more"></div>
@@ -152,6 +155,7 @@
     <button type="button" class="icon" id="v-fav" title="Favorite (F)"><svg class="i" aria-hidden="true"><use href="#i-heart"/></svg></button>
     <button type="button" class="icon" id="v-open" title="Open with its app"><svg class="i" aria-hidden="true"><use href="#i-open"/></svg></button>
     <button type="button" class="icon" id="v-reveal" title="Show in File Explorer"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg></button>
+    <button type="button" class="icon" id="v-share" title="Share…"><svg class="i" aria-hidden="true"><use href="#i-share"/></svg></button>
     <button type="button" class="icon" id="v-trash" title="Delete (Del)"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg></button>
   </header>
   <button type="button" class="nav-btn prev" id="v-prev" title="Previous (←)"><svg class="i" aria-hidden="true"><use href="#i-back"/></svg></button>
@@ -179,4 +183,5 @@
 <div class="toast" id="toast" hidden><span id="toast-text"></span><button type="button" id="toast-undo">Undo</button></div>
 
 <script src="mp4.js"></script>
+<script src="app-scale.js"></script>
 <script src="gallery.js"></script>

@@ -146,7 +146,10 @@ object Thumbs {
         val key = if (big) -item.id - 1 else item.id
         val side = if (big) 640 else 320
         return cache.get(key) ?: withContext(Dispatchers.IO) {
-            runCatching { ctx.contentResolver.loadThumbnail(item.uri, android.util.Size(side, side), null).asImageBitmap() }.getOrNull()
+            runCatching {
+                if (item.cloud.isNotEmpty()) Drive.thumb(ctx, item, side)?.asImageBitmap()
+                else ctx.contentResolver.loadThumbnail(item.uri, android.util.Size(side, side), null).asImageBitmap()
+            }.getOrNull()
                 ?.also { cache.put(key, it) }
         }
     }

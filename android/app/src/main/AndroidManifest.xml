@@ -127,5 +127,12 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+
+        <!-- ONNX Runtime, which runs search by what's in photos (Looks.kt), would start this at every
+             launch to send Microsoft usage reports. Search promises nothing leaves the phone. -->
+        <provider
+            android:name="ai.onnxruntime.TelemetryInitializer"
+            android:authorities="${applicationId}.onnxruntime_telemetry_initializer"
+            tools:node="remove" />
     </application>
 </manifest>

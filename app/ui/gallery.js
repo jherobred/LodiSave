@@ -17,6 +17,14 @@ const icon = (name) => {
 };
 const pref = (k, d) => { try { return localStorage.getItem(k) ?? d } catch { return d } };
 const keep = (k, v) => { try { localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)) } catch {} };
+let appScale = 1;
+function applyAppScale(n) {
+  appScale = lodiAppScale.clampAppScale(n);
+  document.documentElement.style.zoom = appScale === 1 ? '' : String(appScale);
+  keep('g-scale', String(appScale));
+  return appScale;
+}
+applyAppScale(parseFloat(pref('g-scale', '1')));
 const list = (k) => { try { return JSON.parse(pref(k, '[]')) } catch { return [] } };
 const low = (p) => p.toLowerCase();
 const base = (p) => p.split(/[\\/]/).pop();
@@ -36,6 +44,8 @@ const ui = {
   // Width over height of each picture seen, for the Pinterest layout.
   ratios: new Map(),
   quality: pref('g-quality', 'sharp'), hd: pref('g-hd', 'on') === 'on',
+  // Pictures that look like the search words, path to how well, for the words in looksFor.
+  looks: new Map(), looksFor: '', ranked: false,
 };
 // Motion and theme follow the panel's own settings, which share this storage.
 const still = () => pref('motion', 'on') === 'off';
@@ -78,6 +88,7 @@ let loading = null;
 async function load() {
   let changed = false;
   loading ??= invoke('gallery').then((l) => {
+    l.items = l.items.concat(l.cloud);
     if (same(lib, l)) return;
     changed = true;
     lib = l;
@@ -117,10 +128,18 @@ function scope() {
   }
   if (ui.kind !== 'all') items = items.filter((i) => i.kind === ui.kind);
   const words = ui.query.toLowerCase().split(/\s+/).filter(Boolean);
+  const all = items;
   if (words.length) items = items.filter((i) => words.every((w) => low(i.name).includes(w) || i.tags.some((t) => low(t).includes(w)) || low(base(i.dir)).includes(w)));
+  ui.ranked = false;
   if (ui.view === 'dups') return items;
   const by = { new: (a, b) => b.modified - a.modified, old: (a, b) => a.modified - b.modified, name: (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }), size: (a, b) => b.bytes - a.bytes };
-  return [...items].sort(by[ui.sort]);
+  const named = [...items].sort(by[ui.sort]);
+  if (!words.length || ui.looksFor !== ui.query.trim()) return named;
+  // Then the pictures that look like the words though nothing about them says so, best first.
+  const has = new Set(named.map((i) => i.path));
+  const looks = all.filter((i) => !has.has(i.path) && ui.looks.has(i.path)).sort((a, b) => ui.looks.get(b.path) - ui.looks.get(a.path));
+  ui.ranked = looks.length > 0;
+  return named.concat(looks);
 }
 
 // Sidebar -----------------------------------------------------------------------------------------
@@ -201,7 +220,8 @@ function paintSide() {
 
 // Grid --------------------------------------------------------------------------------------------
 
-const src = (p) => convertFileSrc(p);
+// A file only on Google Drive comes through the cloud: address, a part at a time.
+const src = (p) => { const id = byPath.get(p)?.cloud; return id ? convertFileSrc(id, 'cloud') : convertFileSrc(p) };
 // Windows' own thumbnail of a file, sized for the tiles on this screen. Tiles fall back to the file
 // when Windows has none. The size is the long side, and a tile crops to a square that can stretch
 // to almost twice the slider's width, so Sharp asks for enough to cover that crop at screen pixels.
@@ -209,7 +229,7 @@ const thumbSize = () => {
   const need = ui.zoom * devicePixelRatio * (ui.quality === 'fast' ? 1 : 2.2);
   return [256, 512, 768, 1024].find((s) => s >= need) || 1024;
 };
-const thumb = (r) => `${convertFileSrc(r.path, 'thumb')}?s=${thumbSize()}&m=${r.modified}`;
+const thumb = (r) => (r.cloud ? `${convertFileSrc(r.cloud, 'cloud')}?s=${thumbSize()}` : `${convertFileSrc(r.path, 'thumb')}?s=${thumbSize()}&m=${r.modified}`);
 const CHUNK = 160;
 // Videos get their file only once they scroll near, so a folder of clips doesn't load them all.
 const near = new IntersectionObserver((entries) => {
@@ -308,7 +328,8 @@ function tile(r, n) {
     t.append(g);
     badges.append(el('span', '', { textContent: r.name.split('.').pop().toUpperCase() }));
   }
-  if (ui.backed.has(low(r.path))) { const c = el('span'); c.append(icon('cloud')); badges.append(c) }
+  if (r.cloud) { const c = el('span', 'only', { title: 'Only on Google Drive' }); c.append(icon('cloud'), 'Drive'); badges.append(c) }
+  else if (ui.backed.has(low(r.path))) { const c = el('span'); c.append(icon('cloud')); badges.append(c) }
   t.append(badges);
   if (r.fav) { const h = el('span', 'heart'); h.append(icon('heart')); t.append(h) }
   const tick = el('span', 'tick');
@@ -342,7 +363,7 @@ let lastGroup = null;
 function drawMore() {
   if (ui.drawn >= ui.shown.length) return;
   const grid = $('grid'), end = Math.min(ui.shown.length, ui.drawn + CHUNK);
-  const byMonth = ui.months === 'on' && (ui.sort === 'new' || ui.sort === 'old') && ui.view !== 'dups';
+  const byMonth = ui.months === 'on' && (ui.sort === 'new' || ui.sort === 'old') && ui.view !== 'dups' && !ui.ranked;
   let box = grid.lastElementChild?.classList.contains('tiles') ? grid.lastElementChild : null;
   for (let n = ui.drawn; n < end; n++) {
     const r = ui.shown[n];
@@ -583,9 +604,24 @@ async function backup(ps) {
   } catch (e) { e === 'nodrive' || e === 'login' ? driveSheet() : oops(e) }
 }
 
+// What a file only on Google Drive can do before it's downloaded.
+const CLOUD_ACTS = new Set(['view', 'all', 'none', 'get']);
+async function getFromDrive(ps) {
+  const ids = ps.map(item).filter((r) => r?.cloud).map((r) => r.cloud);
+  if (!ids.length) return;
+  try {
+    toast(`Downloading ${ids.length === 1 ? 'it' : ids.length} from Google Drive…`);
+    const n = await invoke('drive_get', { ids });
+    await load();
+    toast(n === ids.length ? `Downloaded ${n === 1 ? 'it' : n} to this PC` : `Downloaded ${n} of ${ids.length}. Try the rest again.`);
+  } catch (e) { e === 'nodrive' || e === 'login' ? driveSheet() : oops(e) }
+}
+
 function act(what, ps = picked()) {
   const one = ps.length === 1 ? item(ps[0]) : null;
+  if (!CLOUD_ACTS.has(what) && ps.some((p) => item(p)?.cloud)) return toast(ps.length === 1 ? "It's only on Google Drive. Download it to this PC first." : 'Some of these are only on Google Drive. Download them to this PC first.');
   ({
+    get: () => getFromDrive(ps),
     fav: () => fav(ps, !ps.every((p) => item(p)?.fav)),
     blur: () => blur(ps, !ps.every((p) => item(p)?.blur)),
     tag: () => tagSheet(ps),
@@ -595,6 +631,7 @@ function act(what, ps = picked()) {
     rename: () => (one ? renameSheet(one) : batchSheet(ps)),
     drive: () => (driveReady ? backup(ps) : driveLater()),
     clip: () => clip(ps),
+    share: () => shareSheet(ps),
     trash: () => trash(ps),
     all: () => { for (const r of ui.shown) ui.sel.add(r.path); paintSel() },
     view: () => openViewer(ui.shown.findIndex((r) => r.path === ps[0])),
@@ -630,10 +667,14 @@ function menu(x, y, entries) {
 }
 addEventListener('pointerdown', (e) => { if (!$('menu').contains(e.target)) $('menu').hidden = true }, true);
 
-const inFolder = (f) => lib.items.filter((i) => under(i.dir, f.path));
+const inFolder = (f) => lib.items.filter((i) => !i.cloud && under(i.dir, f.path));
 
 function tileMenu(r, x, y) {
   const ps = picked(), one = ps.length === 1, still = r.kind === 'image';
+  if (ps.some((p) => item(p)?.cloud)) return menu(x, y, [
+    one && { icon: 'image', label: 'View', run: () => openViewer(ui.shown.indexOf(r)) },
+    { icon: 'get', label: one ? 'Download to this PC' : `Download ${ps.length} to this PC`, run: () => act('get', ps) },
+  ]);
   const locked = ps.filter((p) => item(p)?.kind === 'locked'), plain = ps.length - locked.length;
   menu(x, y, [
     plain && { icon: 'lock', label: 'Lock with a password…', key: 'L', run: () => act('lock', ps) },
@@ -655,6 +696,7 @@ function tileMenu(r, x, y) {
     { icon: 'folder', label: 'Copy to…', run: () => act('copyto', ps) },
     { icon: 'copy', label: 'Copy', key: 'Ctrl+C', run: () => act('clip', ps) },
     { icon: 'copy', label: 'Copy path', run: () => act('path', ps) },
+    { icon: 'share', label: 'Share…', run: () => act('share', ps) },
     one && still && { icon: 'image', label: 'Set as desktop background', run: () => act('wallpaper', ps) },
     { icon: 'cloud', label: driveReady ? 'Back up to Google Drive' : 'Google Drive: later version', ghost: !driveReady, run: () => act('drive', ps) },
     '-',
@@ -707,6 +749,36 @@ function seg(options, value, onPick) {
     s.append(b);
   }
   return s;
+}
+
+// Sharing only ever starts here, from the user's own pick: the sheet shows what goes, blurred files
+// (or ones in a blurred folder) need a tick first since they may be private, and locked files stay
+// out. Windows' Share window then asks where to, and closing it sends nothing.
+function shareSheet(ps) {
+  const rs = ps.map(item).filter(Boolean), go = rs.filter((r) => r.kind !== 'locked'), locked = rs.length - go.length;
+  if (!go.length) return toast("Locked files can't be shared. Remove the password first.");
+  const n = (k, word) => `${k} ${word}${k === 1 ? '' : 's'}`;
+  const hidden = go.filter((r) => r.blur).length;
+  const strip = el('div', 'share-strip');
+  for (const r of go.slice(0, 12)) strip.append(r.kind === 'audio' ? el('div', 'ph', { title: r.name }) : el('img', r.blur ? 'veil' : '', { src: thumb(r), alt: '', title: r.name }));
+  if (go.length > 12) strip.append(el('div', 'more', { textContent: `+${go.length - 12}` }));
+  const ok = button('Share…', 'primary', async () => {
+    close();
+    try { await invoke('g_share', { paths: go.map((r) => r.path) }) } catch (e) { oops(e) }
+  });
+  const nodes = [el('h2', '', { textContent: go.length === 1 ? `Share ${go[0].name}?` : `Share ${go.length} files?` }), strip];
+  if (hidden) {
+    const box = el('input', '', { type: 'checkbox' }), tick = el('label', 'check');
+    ok.disabled = true;
+    box.onchange = () => (ok.disabled = !box.checked);
+    tick.append(box, hidden === 1 ? 'I checked the blurred one and want to share it' : `I checked the ${hidden} blurred ones and want to share them`);
+    nodes.push(el('p', 'warn', { textContent: `${hidden === go.length ? (go.length === 1 ? 'It is' : 'All are') : `${hidden} of these ${hidden === 1 ? 'is' : 'are'}`} blurred, so ${hidden === 1 ? 'it' : 'they'} may be private. Hover to look.` }), tick);
+  }
+  if (locked) nodes.push(el('p', 'note', { textContent: `${n(locked, 'locked file')} stay${locked === 1 ? 's' : ''} out.` }));
+  nodes.push(el('p', 'note', { textContent: 'Windows asks where to send them next. Nothing goes until you pick an app or a person there.' }));
+  const cancel = button('Cancel', '', close);
+  sheet(...nodes, buttons(cancel, ok));
+  cancel.focus();
 }
 
 function renameSheet(r) {
@@ -915,6 +987,7 @@ const PAGES = [
   ['recovery', 'Password recovery', 'lock'],
   ['windows', 'Windows permissions', 'shield'],
   ['repair', 'Repair videos', 'refresh'],
+  ['search', 'Search', 'search'],
 ];
 let prefsPage = 'general';
 
@@ -982,6 +1055,7 @@ async function prefsSections(page) {
   }
   if (page === 'recovery') return [psec('Password recovery', prow('Authenticator app', 'A 6-digit code opens a locked file when its password is forgotten.'), wide(await recoveryBox()))];
   if (page === 'windows') return [psec('Windows permissions', wide(await permissionsBox()))];
+  if (page === 'search') return [psec("Find photos by what's in them", prow('Search inside photos and videos', 'Type "cat", "mountain" or "pusa" and see cats, mountains and cats, whatever the files are called. A picture model, CLIP, looks at each one here on this PC; nothing about your photos or your searches leaves it. Getting the model is a one-time 150 MB download.'), wide(looksBox(true)))];
   const status = el('small', 'note');
   const go2 = el('button', 'pill small primary', { type: 'button', textContent: 'Repair' });
   go2.onclick = async () => {
@@ -991,7 +1065,7 @@ async function prefsSections(page) {
     go2.disabled = false;
     if (fixed) load();
   };
-  const r = prow('Repair videos saved by older versions', 'Fixes sound that runs ahead of or behind the picture, and clips that repeat, in videos LodiSave saved from streaming sites before. Each original goes to the Recycle Bin.', go2);
+  const r = prow('Repair videos saved by older versions', "Fixes sound that runs ahead of or behind the picture, clips that repeat, and wrong lengths or out-of-step sound in Windows' own player, in videos LodiSave saved from streaming sites before. Each original goes to the Recycle Bin.", go2);
   r.querySelector('.ptext').append(status);
   return [psec('Repair videos', r)];
 }
@@ -1032,12 +1106,12 @@ $('prefs').onclick = (e) => { if (e.target === $('prefs')) $('prefs').close() };
 async function repairVideos(say) {
   ui.sel.clear();
   paintSel(); // the preview lets go of a video it was playing
-  const vids = lib.items.filter((i) => i.kind === 'video' && /\.(mp4|m4v)$/i.test(i.name) && i.bytes <= MAX_LOCK);
+  const vids = lib.items.filter((i) => !i.cloud && i.kind === 'video' && /\.(mp4|m4v)$/i.test(i.name) && i.bytes <= MAX_LOCK);
   let fixed = 0, failed = 0;
   for (const [n, r] of vids.entries()) {
     say(`Checking ${n + 1} of ${vids.length}…`);
     try {
-      // Its first 256 KB tell whether it is fragmented MP4, the only kind LodiSave joined.
+      // Its first 256 KB tell whether it is fragmented MP4, which repair() makes plain.
       const head = new Uint8Array(await (await fetch(src(r.path), { headers: { Range: 'bytes=0-262143' } })).arrayBuffer());
       if (!LodiMP4.fragmented(head)) continue;
       // Windows' asset server may send the whole file instead of the range asked for.
@@ -1054,6 +1128,8 @@ async function repairVideos(say) {
 let driveReady = true;
 invoke('drive_status').then((s) => {
   driveReady = s.ready;
+  // What's on Drive may have changed from the phone or another PC since last time.
+  if (s.connected) invoke('drive_cloud').then(load, () => {});
   $('open-drive').classList.toggle('ghost', !driveReady);
   $('open-drive').querySelector('.later').hidden = driveReady;
   for (const b of document.querySelectorAll('[data-act="drive"]')) b.classList.toggle('ghost', !driveReady);
@@ -1117,7 +1193,7 @@ listen('drive://progress', (e) => {
 
 async function findDups() {
   ui.dups = null;
-  try { ui.dups = await invoke('g_duplicates', { paths: lib.items.map((i) => i.path) }) } catch (e) { ui.dups = []; oops(e) }
+  try { ui.dups = await invoke('g_duplicates', { paths: lib.items.filter((i) => !i.cloud).map((i) => i.path) }) } catch (e) { ui.dups = []; oops(e) }
   if (ui.view === 'dups') paint();
 }
 
@@ -1605,7 +1681,8 @@ function onePeek(body, r) {
   tags.append(add);
   const ps = [r.path];
   const main = el('div', 'mainacts');
-  main.append(pill('View', 'primary', () => openViewer(at())), pill('Open with app', '', () => act('open', ps)), pill('Show in folder', '', () => act('reveal', ps)));
+  if (r.cloud) main.append(pill('View', 'primary', () => openViewer(at())), pill('Download to this PC', '', () => act('get', ps)));
+  else main.append(pill('View', 'primary', () => openViewer(at())), pill('Open with app', '', () => act('open', ps)), pill('Show in folder', '', () => act('reveal', ps)));
   body.append(
     box,
     el('p', 'pname', { textContent: from ? titleOf(r.name) : r.name }),
@@ -1614,10 +1691,10 @@ function onePeek(body, r) {
       ['Size', r.kind === 'image' || r.kind === 'gif' || r.kind === 'video' ? dims : null],
       ['File', `${size(r.bytes)}, ${r.name.split('.').pop().toUpperCase()}`],
       ['Changed', new Date(r.modified).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })],
-      ['Folder', folder],
-      ['Google Drive', ui.backed.has(low(r.path)) ? 'Backed up' : null, 'ok'],
+      ['Folder', r.dir ? folder : null],
+      ['Google Drive', r.cloud ? 'Only there' : ui.backed.has(low(r.path)) ? 'Backed up' : null, 'ok'],
     ]),
-    tags, main, acts(ps, r.kind === 'image' ? [['image', 'Set as desktop background', 'wallpaper']] : []),
+    r.cloud ? '' : tags, main, acts(ps, r.kind === 'image' ? [['image', 'Set as desktop background', 'wallpaper']] : []),
   );
 }
 
@@ -1651,7 +1728,8 @@ function manyPeek(body, rs) {
     .map(([word, k]) => [word, count(k)]).filter(([, n]) => n).map(([word, n]) => `${n} ${word}${n === 1 ? '' : 's'}`).join(', ');
   const ps = rs.map((r) => r.path);
   const main = el('div', 'mainacts');
-  if (driveReady) main.append(pill('Back up to Google Drive', 'primary', () => act('drive', ps)), pill('Move to', '', () => act('move', ps)), pill('Tags', '', () => act('tag', ps)));
+  if (rs.some((r) => r.cloud)) main.append(pill('Download to this PC', 'primary', () => act('get', ps)));
+  else if (driveReady) main.append(pill('Back up to Google Drive', 'primary', () => act('drive', ps)), pill('Move to', '', () => act('move', ps)), pill('Tags', '', () => act('tag', ps)));
   else main.append(pill('Move to', 'primary', () => act('move', ps)), pill('Tags', '', () => act('tag', ps)), pill('Copy', '', () => act('clip', ps)));
   body.append(
     stack, el('p', 'pname', { textContent: `${rs.length} files` }), el('p', 'psub', { textContent: `${mix}, ${size(rs.reduce((n, r) => n + r.bytes, 0))} in all` }),
@@ -1662,7 +1740,7 @@ function manyPeek(body, rs) {
 // With nothing picked: what this view holds, then what needs doing, each with its one action.
 function nonePeek(body) {
   const rs = ui.shown, total = rs.reduce((n, r) => n + r.bytes, 0);
-  const backed = rs.filter((r) => ui.backed.has(low(r.path))).length;
+  const backed = rs.filter((r) => r.cloud || ui.backed.has(low(r.path))).length;
   const locked = rs.filter((r) => r.kind === 'locked').length;
   const fromApps = rs.filter((r) => sourceOf(r.name)).length;
   const todo = el('div', 'todo');
@@ -1681,7 +1759,7 @@ function nonePeek(body) {
   const sum = el('summary');
   sum.append(icon('down'), 'Keyboard shortcuts');
   const dl = el('dl');
-  for (const [k, v] of [['Click', 'Preview'], ['Double-click, Enter', 'Open'], ['Ctrl, Shift + click', 'Pick more'], ['Arrows', 'Move'], ['F', 'Favorite'], ['T', 'Tags'], ['M', 'Move to'], ['L', 'Lock'], ['F2', 'Rename'], ['Del', 'Delete'], ['[ and ]', 'Fold the side panels'], ['Ctrl + wheel', 'Tile size']]) {
+  for (const [k, v] of [['Click', 'Preview'], ['Double-click, Enter', 'Open'], ['Ctrl, Shift + click', 'Pick more'], ['Arrows', 'Move'], ['F', 'Favorite'], ['T', 'Tags'], ['M', 'Move to'], ['L', 'Lock'], ['F2', 'Rename'], ['Del', 'Delete'], ['[ and ]', 'Fold the side panels'], ['Ctrl + wheel', 'Tile size'], ['Ctrl + and Ctrl -', 'App size'], ['Ctrl 0', 'App size 100%']]) {
     dl.append(el('dt', '', { textContent: k }), el('dd', '', { textContent: v }));
   }
   keys.append(sum, dl);
@@ -1708,12 +1786,18 @@ function acts(ps, extra, skip = []) {
     b.onclick = () => act(what, ps);
     list.append(b);
   };
+  // The peek's own Download button is all a file only on Drive needs.
+  if (ps.some((p) => item(p)?.cloud)) {
+    list.append(el('p', 'note', { textContent: 'Only on Google Drive. Download to rename, move, share or delete it here.' }));
+    return list;
+  }
   const favs = ps.every((p) => item(p)?.fav), blurred = ps.every((p) => item(p)?.blur), anyPlain = ps.some((p) => item(p)?.kind !== 'locked');
   row('heart', favs ? 'Favorite' : 'Add to favorites', 'fav', 'F', favs ? 'on' : '');
   row('tag', 'Tags', 'tag', 'T');
   row('move', 'Move to', 'move', 'M');
   row('folder', 'Copy to', 'copyto');
   row('copy', 'Copy', 'clip', 'Ctrl+C');
+  row('share', 'Share', 'share');
   if (ps.length === 1) row('edit', 'Rename', 'rename', 'F2');
   for (const [name, label, what] of extra) row(name, label, what);
   row('copy', 'Copy path', 'path');
@@ -1738,9 +1822,10 @@ function paintRail(ps) {
     x.onclick = () => act(what, ps);
     return x;
   };
+  if (ps.some((p) => item(p)?.cloud)) return $('peek-rail').replaceChildren(b('image', 'View (Enter)', 'view'), b('get', 'Download to this PC', 'get'));
   $('peek-rail').replaceChildren(
     b('image', 'View (Enter)', 'view'), b('heart', 'Favorite (F)', 'fav'), b('tag', 'Tags (T)', 'tag'), b('move', 'Move to (M)', 'move'),
-    b('copy', 'Copy (Ctrl+C)', 'clip'), b('cloud', driveReady ? 'Back up' : 'Google Drive: later version', 'drive', driveReady ? '' : 'ghost'), el('hr'), b('trash', 'Delete (Del)', 'trash', 'bad'),
+    b('copy', 'Copy (Ctrl+C)', 'clip'), b('share', 'Share', 'share'), b('cloud', driveReady ? 'Back up' : 'Google Drive: later version', 'drive', driveReady ? '' : 'ghost'), el('hr'), b('trash', 'Delete (Del)', 'trash', 'bad'),
   );
 }
 
@@ -1865,6 +1950,8 @@ const meta = (...facts) => $('v-meta').replaceChildren(...facts.map((f) => el('s
 function paintViewer() {
   const r = item(view.list[view.at]);
   if (!r) return closeViewer();
+  // A file only on Google Drive can be looked at here; the rest waits until it's downloaded.
+  for (const id of ['v-fav', 'v-open', 'v-reveal', 'v-share', 'v-trash']) $(id).hidden = !!r.cloud;
   Object.assign(view, { turn: 0, zoom: 1, x: 0, y: 0 });
   const stage = $('stage');
   stage.classList.remove('zoomed');
@@ -1981,15 +2068,26 @@ $('v-hd').onclick = () => setHd(!hd.on);
 $('v-fav').onclick = async () => { const r = item(view.list[view.at]); await fav([r.path], !r.fav); paintViewer() };
 $('v-open').onclick = () => act('open', [view.list[view.at]]);
 $('v-reveal').onclick = () => act('reveal', [view.list[view.at]]);
+$('v-share').onclick = () => act('share', [view.list[view.at]]);
 $('v-trash').onclick = () => trash([view.list[view.at]]);
 
 // Keys --------------------------------------------------------------------------------------------
 
 addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const next = lodiAppScale.appScaleFromKey(appScale, e.key);
+    if (next != null) {
+      e.preventDefault();
+      applyAppScale(next);
+      toast(`${Math.round(appScale * 100)}%`);
+      return;
+    }
+  }
   if ($('sheet').open || $('prefs').open) return;
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
   if (!$('viewer').hidden) {
     const r = item(view.list[view.at]);
+    if (r?.cloud && ['Delete', 'f', 'F', 'b', 'B'].includes(e.key)) return;
     const keys = {
       Escape: closeViewer, ArrowLeft: () => step(-1), ArrowRight: () => step(1), Delete: () => trash([r.path]),
       f: () => $('v-fav').click(), s: () => $('v-show').click(), r: () => $('v-rot').click(), e: () => $('v-hd').click(), b: () => blur([r.path], !r.blur).then(paintViewer),
@@ -2082,7 +2180,66 @@ for (const b of $('layout').children) b.onclick = () => { ui.layout = b.dataset.
 paintLayout();
 for (const b of $('kinds').children) b.onclick = () => { ui.kind = b.dataset.kind; for (const o of $('kinds').children) o.classList.toggle('on', o === b); paint() };
 let typingTimer;
-$('query').oninput = () => { clearTimeout(typingTimer); typingTimer = setTimeout(() => { ui.query = $('query').value; paint() }, 150) };
+// Finding pictures by what's in them ---------------------------------------------------------------
+
+let looking = { ready: false, getting: null, error: null, done: 0, total: 0 };
+let lookTimer, lookPoll;
+// Asks for the pictures that look like the words, a moment after typing stops.
+function lookFor() {
+  clearTimeout(lookTimer);
+  const q = ui.query.trim();
+  if (!q || !looking.ready) return paintLooks();
+  lookTimer = setTimeout(async () => {
+    const hits = await invoke('search_find', { query: q }).catch(() => []);
+    // The grid stays as it is while new photos looked at add nothing to the search.
+    if (ui.query.trim() !== q || (ui.looksFor === q && hits.length === ui.looks.size && hits.every(([p]) => ui.looks.has(p)))) return;
+    ui.looks = new Map(hits);
+    ui.looksFor = q;
+    paintGrid(true);
+  }, 250);
+  paintLooks();
+}
+// Keeps up with the download and the first look through the photos, then searches again.
+async function pollLooks() {
+  clearTimeout(lookPoll);
+  const was = looking;
+  looking = await invoke('search_state').catch(() => looking);
+  paintLooks();
+  if (looking.getting != null || (looking.ready && looking.done < looking.total)) lookPoll = setTimeout(pollLooks, 2000);
+  if (ui.query && looking.ready && (looking.done !== was.done || !was.ready)) lookFor();
+}
+// The bar over the grid while searching, or the Settings row: an offer to turn it on, the download,
+// or how many photos it has looked at so far.
+function looksBox(always = false) {
+  const box = el('div', 'looks');
+  const text = el('span');
+  box.append(icon('search'), text);
+  if (looking.getting != null) {
+    text.textContent = `Getting the picture search model… ${Math.round(looking.getting * 100)}%`;
+    const m = el('div', 'meter'), bar = el('span');
+    bar.style.transform = `scaleX(${looking.getting})`;
+    m.append(bar);
+    box.append(m);
+  } else if (!looking.ready) {
+    text.textContent = looking.error ? "Couldn't get the picture search model. Check the connection and try again." : `Find photos by what's in them too, like "cat" or "mountain", not only by name.`;
+    const on = el('button', 'pill small primary', { type: 'button', textContent: looking.error ? 'Try again' : 'Turn on (150 MB, once)' });
+    on.onclick = async () => { on.disabled = true; await invoke('search_setup').catch(() => {}); looking.getting = 0; looking.error = null; pollLooks() };
+    box.append(on);
+  } else if (looking.done < looking.total) text.textContent = `Looking through your photos: ${looking.done} of ${looking.total}. Search covers those so far.`;
+  else if (always) text.textContent = `On. ${looking.total} photos and videos looked at.`;
+  else return null;
+  return box;
+}
+function paintLooks() {
+  const box = ui.query.trim() ? looksBox() : null;
+  $('looks').hidden = !box;
+  $('looks').replaceChildren(...(box ? [box] : []));
+  $('query').placeholder = looking.ready ? "Search names, tags, or what's in photos" : 'Search names, tags, folders';
+  if ($('prefs').open && prefsPage === 'search' && !$('prefs-q').value) settingsSheet();
+}
+pollLooks();
+
+$('query').oninput = () => { clearTimeout(typingTimer); typingTimer = setTimeout(() => { ui.query = $('query').value; paint(); lookFor() }, 150) };
 $('sort').value = ui.sort;
 $('sort').onchange = () => { ui.sort = $('sort').value; keep('g-sort', ui.sort); paint() };
 $('deep').checked = ui.deep;

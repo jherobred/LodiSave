@@ -107,18 +107,23 @@ const probe = (file) => {
     }
   }
   // A file the old joiner wrote: the clean file with its fragments looped, then its first video
-  // fragment gone so the video starts after the audio. repair() gives back a clean file.
+  // fragment gone so the video starts after the audio. repair() gives back a clean plain file.
   const good = MP4.merge(fs.readFileSync(path.join(media, 'av/video.mp4')), fs.readFileSync(path.join(media, 'av/audio.mp4')));
   assert.equal(MP4.repair(good), null, 'a clean file is left alone');
-  assert.ok(MP4.fragmented(good.subarray(0, 4096)));
+  assert.ok(!MP4.fragmented(good.subarray(0, 4096)), 'merge writes a plain MP4');
+  const joined = Buffer.from(MP4.joinFragments(fs.readFileSync(path.join(media, 'av/video.mp4')), fs.readFileSync(path.join(media, 'av/audio.mp4'))));
+  assert.ok(MP4.fragmented(joined.subarray(0, 4096)));
+  assert.deepEqual(MP4.repair(joined), good, 'a fragmented file becomes the same plain file');
   const top = [];
-  for (let o = 0; o + 8 <= good.length; o += Buffer.from(good.buffer, good.byteOffset + o, 4).readUInt32BE(0)) top.push(Buffer.from(good.subarray(o, o + Buffer.from(good.buffer, good.byteOffset + o, 4).readUInt32BE(0))));
+  for (let o = 0; o + 8 <= joined.length; o += joined.readUInt32BE(o)) top.push(joined.subarray(o, o + joined.readUInt32BE(o)));
   const head = top.filter((x) => x.toString('latin1', 4, 8) !== 'moof' && x.toString('latin1', 4, 8) !== 'mdat');
   const frags = top.flatMap((x, i) => (x.toString('latin1', 4, 8) === 'moof' ? [Buffer.concat([x, top[i + 1]])] : []));
   const track = (f) => f.readUInt32BE(f.indexOf('tfhd') + 8);
   const firstVideo = frags.findIndex((f) => track(f) === 1);
   for (const [name, broken] of [['looped', [...head, ...frags, ...frags]], ['late video', [...head, ...frags.filter((_, i) => i !== firstVideo)]]]) {
-    fs.writeFileSync(mergedFile, MP4.repair(Buffer.concat(broken)));
+    const fixed = MP4.repair(Buffer.concat(broken));
+    assert.ok(!MP4.fragmented(fixed.subarray(0, 4096)), `repair ${name}: plain MP4`);
+    fs.writeFileSync(mergedFile, fixed);
     assert.deepEqual(probe(mergedFile), { streams: 'audio+video', clean: true }, `repair ${name}`);
     for (const ts of Object.values(packets(mergedFile))) {
       assert.equal(new Set(ts).size, ts.length, `repair ${name}: no repeated frames`);
@@ -141,8 +146,9 @@ const stopServer = await serve();
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lodisave-'));
 const context = await chromium.launchPersistentContext(path.join(tmp, 'profile'), {
   // Edge by default: Playwright's own Chromium 156 fails to start on some Windows PCs (side-by-side
-  // error). Set CHANNEL=chromium on machines where it starts.
-  channel: process.env.CHANNEL || 'msedge',
+  // error). Set CHANNEL=chromium on machines where it starts. EDGE is a full path when Edge is
+  // installed for the machine rather than only for this user.
+  ...(process.env.EDGE ? { executablePath: process.env.EDGE } : { channel: process.env.CHANNEL || 'msedge' }),
   headless: !process.env.HEADED,
   acceptDownloads: true,
   downloadsPath: path.join(tmp, 'downloads'),

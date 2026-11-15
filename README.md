@@ -29,14 +29,15 @@ Right-click blocked, an invisible layer over the picture, a video that only stre
   <br><sub>Click for the full video with sound (37 s).</sub>
 </p>
 
-## What's new in 0.3
+## What's new in 0.4
 
-- **Save into any folder.** Tick several photos and videos, press Save once, and they all land in the folder you pick. Make a new folder right from the save bar.
-- **Pinterest-style grid** on Android and Windows: two a row, each save in its own shape. Or keep Squares, three a row.
-- **Blur** your saves on both apps: blur everything, or only the ones you pick. Hold a save (right-click on Windows) to blur or unblur it.
-- **Videos play in the grid**, silently and smoothly, all at once.
-- **Android Gallery tab**, **Google Drive backup**, **profile browsing** for Instagram and Threads, and **background sounds**. See [Android](#android).
-- Saves Snapchat stories, TikTok photo posts and Facebook stories from their links.
+- **Search by what's in the photo.** Type `cat`, `mountain` or `pusa` on Windows or Android. Matching photos and videos show up even when the file name is nothing like that. A picture model (CLIP) runs on the device. The first time, it downloads about 150 MB and checks each file. Nothing about your photos or your searches is sent anywhere.
+- **Google Drive on the phone.** Files that exist only in Drive show in the Library, with thumbnails. Open one in the viewer, or download it.
+- **Google Drive on Windows.** Sign in from the app and back up the same way as on the phone. Both apps use the same Google Cloud project, so uploads from one show up on the other.
+- **Share from the Windows gallery** through Windows' own Share window. Closing that window sends nothing.
+- **Share on Android** asks first, and blurred saves need a tick before they go.
+- **Scale the gallery window** with Ctrl and + or -. Tile size stays on Ctrl + wheel.
+- **Streamed videos keep their sound in step** in Windows' own player. HD videos from streaming sites now save as a plain MP4 with the right length. Settings, then Repair videos, fixes ones saved by older versions.
 
 ## Windows and the browser
 
@@ -86,7 +87,8 @@ Right-click blocked, an invisible layer over the picture, a video that only stre
 - **Floating Lodi** sits over every app. Tap Copy link on a post, then tap Lodi. With the LodiSave picker on in Accessibility settings, tapping Lodi puts a checkbox on each photo and video in Threads, Instagram, Reddit or any app.
 - **Home, Library and Gallery tabs.** The Gallery shows every photo and video on your phone, with albums, favorites, moving, sharing and deleting. Hold a photo and slide across others to select them all.
 - **Browse a profile.** Type a username to see an Instagram account's stories, highlights and posts (signed in), or a Threads account's posts, then pick and save. Stories are never marked seen.
-- **Google Drive backup.** Back up the saves you pick, or everything older than a set number of days. Optionally free up the phone once Drive confirms the upload.
+- **Search by what's in the photo.** The same search as on Windows: `cat`, `mountain`, `pusa`. The file name does not have to match.
+- **Google Drive backup.** Back up the saves you pick, or everything older than a set number of days. Optionally free up the phone once Drive confirms the upload. Files that are only on Drive show in the Library, open in the viewer, and have a Download button.
 - **Background sounds.** Play the sound of other videos and songs behind the one you're watching, even with the screen off.
 - **Viewer.** Swipe down to close, rotate photos, videos and GIFs, and keep a turned copy.
 - **Round home-screen widget** saves the link you copied in one tap.
@@ -96,16 +98,16 @@ Right-click blocked, an invisible layer over the picture, a video that only stre
 
 **Windows**
 
-1. Download `LodiSave-Setup-0.3.1.exe` from [Releases](https://github.com/jherobred/LodiSave/releases/latest). When SmartScreen warns, choose More info, then Run anyway.
-2. For the browser extension, choose Set up extension when Setup finishes, or Settings, then Browser extension, Set up in the tray panel. LodiSave opens Chrome, Edge or Brave with a checklist on screen: paste the Extensions address, turn on Developer mode, click Load unpacked, and paste the folder. Browsers only let apps install extensions from their stores, so these clicks stay yours. The same files are in `LodiSave-extension-0.3.1.zip`.
+1. Download `LodiSave-Setup-0.4.0.exe` from [Releases](https://github.com/jherobred/LodiSave/releases/latest). When SmartScreen warns, choose More info, then Run anyway.
+2. For the browser extension, choose Set up extension when Setup finishes, or Settings, then Browser extension, Set up in the tray panel. LodiSave opens Chrome, Edge or Brave with a checklist on screen: paste the Extensions address, turn on Developer mode, click Load unpacked, and paste the folder. Browsers only let apps install extensions from their stores, so these clicks stay yours. The same files are in `LodiSave-extension-0.4.0.zip`.
 
-`LodiSave-0.3.1-portable.exe` runs without installing. Saves go to `Downloads\LodiSave`. If Windows Security's Controlled folder access protects Downloads, allow LodiSave under Ransomware protection.
+`LodiSave-0.4.0-portable.exe` runs without installing. Saves go to `Downloads\LodiSave`. If Windows Security's Controlled folder access protects Downloads, allow LodiSave under Ransomware protection.
 
 <p align="center"><img src="docs/installer.png" width="480" alt="LodiSave Setup"></p>
 
 **Android**
 
-Install `LodiSave-0.3.1-android.apk` (Android 10+, arm64) from [Releases](https://github.com/jherobred/LodiSave/releases/latest), and allow installs from your browser or file manager when Android asks. Android may call the picker setting restricted for an app installed from a file: open App info, tap ⋮, then Allow restricted settings.
+Install `LodiSave-0.4.0-android.apk` (Android 10+, arm64) from [Releases](https://github.com/jherobred/LodiSave/releases/latest), and allow installs from your browser or file manager when Android asks. Android may call the picker setting restricted for an app installed from a file: open App info, tap ⋮, then Allow restricted settings. The picture search makes this download larger than 0.3.
 
 ## Limits
 
@@ -117,7 +119,7 @@ Install `LodiSave-0.3.1-android.apk` (Android 10+, arm64) from [Releases](https:
 
 ## Privacy
 
-Everything runs on your device, with no LodiSave account, no servers and no analytics. The apps download [yt-dlp](https://github.com/yt-dlp/yt-dlp) from its GitHub releases on first use and check for an update once a week. Sign-in cookies go only to the site they came from. Drive backup sends files only to your own Google Drive, and only when you turn it on.
+Everything runs on your device, with no LodiSave account, no servers and no analytics. The apps download [yt-dlp](https://github.com/yt-dlp/yt-dlp) from its GitHub releases on first use and check for an update once a week. Picture search downloads its model once from Hugging Face and checks the file size and SHA-256; the photos and the words you type stay on the device. Sign-in cookies go only to the site they came from. Drive backup sends files only to your own Google Drive, and only when you turn it on. The Windows app's Google sign-in client is built in. Google treats that kind of installed-app secret as public.
 
 ## Build
 
@@ -139,7 +141,7 @@ cd android
 
 QuickJS is checked in as `android/app/src/main/jniLibs/<abi>/libqjs.so`. `pwsh scripts/build-quickjs.ps1` rebuilds it from source with the Android NDK.
 
-`npm test` runs the extension on local fixture pages in Edge and checks every saved file against its original. The release script writes the installer, the portable app, the extension zip and `SHA256SUMS.txt` to `dist/`.
+`npm test` runs the extension on local fixture pages in Edge and checks every saved file against its original. The release script writes the installer, the portable app, the extension zip and `SHA256SUMS.txt` to `dist/`. Google Drive on Windows needs `LODISAVE_GOOGLE_CLIENT_ID` and `LODISAVE_GOOGLE_CLIENT_SECRET` from a Desktop OAuth client in the same Google Cloud project as the Android app. Without them, pass `-NoDrive` and the app shows Drive as not set up.
 
 | Folder | What |
 |---|---|

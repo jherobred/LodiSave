@@ -16,8 +16,8 @@ android {
         applicationId = "io.github.jherobred.lodisave"
         minSdk = 29
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.3.2"
+        versionCode = 12
+        versionName = "0.4.0"
         // Phones, plus x86_64 for the emulator. Each ABI carries its own copy of Python, so a quick
         // emulator build can pass -Plodi.abis=x86_64.
         ndk {
@@ -77,8 +77,11 @@ dependencies {
     // Small silent copies of videos for the grids, so many can play at once.
     implementation(libs.media3.transformer)
     implementation(libs.media3.effect)
+    implementation(libs.onnxruntime.android)
 
     testImplementation(libs.junit)
+    // Android's own org.json is only a stub in unit tests; this is the real one, for Looks' tokenizer.
+    testImplementation(libs.json)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

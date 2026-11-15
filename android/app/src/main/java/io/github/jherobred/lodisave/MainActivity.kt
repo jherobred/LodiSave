@@ -201,17 +201,31 @@ private fun App(clip: String?, focus: Int, free: Boolean, onFreeDone: () -> Unit
     var access by remember { mutableStateOf(Saver.galleryAccess(ctx)) }
     var gallery by remember { mutableStateOf(emptyList<Saved>()) }
     var galleryBin by remember { mutableStateOf(emptyList<Saved>()) }
+    var cloud by remember { mutableStateOf(emptyList<Saved>()) } // in Google Drive only, not on the phone
     var asked by remember { mutableIntStateOf(0) } // goes up when Android answers the gallery permission
     // Again on each return and after each change, for saves made from the share card or the widget meanwhile.
     LaunchedEffect(finished, focus, Library.changes, asked) {
         access = Saver.galleryAccess(ctx)
         val (r, m, b) = withContext(Dispatchers.IO) { Triple(Saver.recent(ctx), Saver.media(ctx), Saver.media(ctx, trash = true)) }
         recent = r; media = m; bin = b
-        if (access == "none") { gallery = emptyList(); galleryBin = emptyList(); return@LaunchedEffect }
-        val (g, gb) = withContext(Dispatchers.IO) { Saver.gallery(ctx) to Saver.gallery(ctx, trash = true) }
-        gallery = g; galleryBin = gb
+        if (access == "none") { gallery = emptyList(); galleryBin = emptyList() }
+        else {
+            val (g, gb) = withContext(Dispatchers.IO) { Saver.gallery(ctx) to Saver.gallery(ctx, trash = true) }
+            gallery = g; galleryBin = gb
+        }
+        // What's in Drive and not on the phone shows beside the phone's own: the list kept from last
+        // time at once, then Drive's answer.
+        val phone = (m + b + gallery + galleryBin).map { it.id }.toSet()
+        cloud = withContext(Dispatchers.IO) { Drive.onlyInCloud(ctx, phone) }
+        withContext(Dispatchers.IO) { runCatching { Drive.refreshCloud(ctx) } }
+        cloud = withContext(Dispatchers.IO) { Drive.onlyInCloud(ctx, phone) }
     }
-    val all = remember(media, bin, gallery, galleryBin) { (gallery + galleryBin + media + bin).associateBy { it.id } }
+    // Drive's files join the Gallery, or the Library while the Gallery isn't allowed.
+    val shownGallery = remember(gallery, cloud) { if (access == "none" || cloud.isEmpty()) gallery else (gallery + cloud).sortedByDescending { it.added } }
+    val shownMedia = remember(media, cloud) { if (access != "none" || cloud.isEmpty()) media else (media + cloud).sortedByDescending { it.added } }
+    val all = remember(media, bin, gallery, galleryBin, cloud) { (gallery + galleryBin + media + bin + cloud).associateBy { it.id } }
+    // Search by what's in them works through these, once it's on.
+    LaunchedEffect(all) { withContext(Dispatchers.Default) { Looks.want(ctx, all.values) } }
     val albums = remember(media, Library.changes) { Library.albums(ctx, media) }
     val folders = remember(gallery, Library.changes) { Library.folders(ctx, gallery) }
     var seen by remember { mutableStateOf<Long?>(null) }
@@ -285,10 +299,10 @@ private fun App(clip: String?, focus: Int, free: Boolean, onFreeDone: () -> Unit
                                         onOpen = { at -> go(Screen.View(recent.map { it.id }, at, false, "home")) })
                                 }
                                 Screen.Library -> saved.SaveableStateProvider("library") {
-                                    Library(copy, media, bin, seen, onOpen = { ids, at, trash -> go(Screen.View(ids, at, trash, "lib")) }, bottom = bottom, onPicking = { picking = it })
+                                    Library(copy, shownMedia, bin, seen, onOpen = { ids, at, trash -> go(Screen.View(ids, at, trash, "lib")) }, bottom = bottom, onPicking = { picking = it })
                                 }
                                 Screen.Gallery -> saved.SaveableStateProvider("gallery") {
-                                    Gallery(copy, gallery, galleryBin, seen, access, { asked++ }, onOpen = { ids, at, trash -> go(Screen.View(ids, at, trash, "gal")) }, bottom, onPicking = { picking = it })
+                                    Gallery(copy, shownGallery, galleryBin, seen, access, { asked++ }, onOpen = { ids, at, trash -> go(Screen.View(ids, at, trash, "gal")) }, bottom, onPicking = { picking = it })
                                 }
                                 Screen.Intro -> Intro(copy, focus, ::introDone)
                                 Screen.Profile -> Profile(copy, onBack = ::back)

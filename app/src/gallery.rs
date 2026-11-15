@@ -29,12 +29,12 @@ pub struct Gallery {
 
 #[derive(Serialize)]
 pub struct Entry {
-    path: PathBuf,
+    pub(crate) path: PathBuf,
     name: String,
     dir: PathBuf,
-    kind: &'static str,
-    bytes: u64,
-    modified: u64,
+    pub(crate) kind: &'static str,
+    pub(crate) bytes: u64,
+    pub(crate) modified: u64,
     fav: bool,
     blur: bool,
     tags: Vec<String>,
@@ -419,7 +419,7 @@ impl Gallery {
     }
 }
 
-fn locked(p: &Path) -> bool {
+pub fn locked(p: &Path) -> bool {
     p.extension().is_some_and(|e| e.eq_ignore_ascii_case("lodilock"))
 }
 

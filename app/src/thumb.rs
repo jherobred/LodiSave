@@ -44,6 +44,19 @@ pub fn queue(job: impl FnOnce() + Send + 'static) {
 /// The thumbnail of `path` at most `size` pixels on its long side, as PNG. None when Windows has no
 /// thumbnail for it (a format without a thumbnail handler), so the window falls back to the file.
 pub fn png(path: &Path, size: i32) -> Option<Vec<u8>> {
+    let (w, h, px) = rgba(path, size)?;
+    let mut out = Vec::new();
+    let mut e = png::Encoder::new(&mut out, w, h);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    e.set_compression(png::Compression::Fast);
+    e.write_header().ok()?.write_image_data(&px).ok()?;
+    Some(out)
+}
+
+/// The thumbnail of `path` at most `size` pixels on its long side: width, height and RGBA pixels.
+/// The calling thread needs COM.
+pub fn rgba(path: &Path, size: i32) -> Option<(u32, u32, Vec<u8>)> {
     let (w, h, mut px) = unsafe {
         let item: IShellItemImageFactory = SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None).ok()?;
         let bmp = item.GetImage(SIZE { cx: size, cy: size }, SIIGBF_RESIZETOFIT | SIIGBF_THUMBNAILONLY).ok()?;
@@ -77,13 +90,7 @@ pub fn png(path: &Path, size: i32) -> Option<Vec<u8>> {
             }
         }
     }
-    let mut out = Vec::new();
-    let mut e = png::Encoder::new(&mut out, w, h);
-    e.set_color(png::ColorType::Rgba);
-    e.set_depth(png::BitDepth::Eight);
-    e.set_compression(png::Compression::Fast);
-    e.write_header().ok()?.write_image_data(&px).ok()?;
-    Some(out)
+    Some((w, h, px))
 }
 
 /// The file path in a thumb.localhost URL path, which the window percent-encodes.

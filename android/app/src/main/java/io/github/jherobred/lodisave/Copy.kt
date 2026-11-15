@@ -152,6 +152,14 @@ class Copy(val tl: Boolean) {
     fun files(n: Int) = if (n == 1) "1 file" else "$n files"
     fun selectedN(n: Int) = t("$n selected", "$n ang napili")
     val share = t("Share", "I-share")
+    fun shareWhat(n: Int) = t("Share ${files(n)}?", "I-share ang ${files(n)}?")
+    val shareNext = t("Your phone asks which app next. Nothing goes until you pick one there.",
+        "Itatanong ng phone kung saang app. Walang maipapadala hangga't wala kang pinipili doon.")
+    fun shareBlurred(n: Int, of: Int) = t(
+        if (of == 1) "It's blurred, so it may be private." else "$n of them ${if (n == 1) "is" else "are"} blurred, so they may be private.",
+        if (of == 1) "Naka-blur ito, kaya baka pribado." else "Naka-blur ang $n sa mga ito, kaya baka pribado.",
+    )
+    val shareChecked = t("I checked the blurred ones and they're OK to share", "Nakita ko na ang mga naka-blur at okay silang i-share")
     val move = t("Move", "Ilipat")
     val favorite = t("Favorite", "Favorite")
     val unfavorite = t("Unfavorite", "Alisin sa favorites")
@@ -366,6 +374,18 @@ class Copy(val tl: Boolean) {
     fun backingUp(done: Int, total: Int) = if (total == 0) t("Backing up to Drive…", "Nagba-backup sa Drive…") else t("Backing up to Drive · $done of $total", "Nagba-backup sa Drive · $done sa $total")
     val backUpNow = t("Back up now", "Mag-backup na")
     val toDrive = t("Drive", "Drive")
+    val inDrive = t("In Drive", "Nasa Drive")
+    val download = t("Download", "I-download")
+    fun downloading(n: Int) = t("Downloading ${files(n)} from Drive…", "Dina-download ang ${files(n)} mula sa Drive…")
+    fun downloaded(n: Int) = t("Downloaded ${files(n)} to your phone", "Na-download ang ${files(n)} sa phone mo")
+    val searchLooks = t("Search by name or what's in it", "Hanapin ayon sa pangalan o laman")
+    val looksOffer = t("Find photos by what's in them too, like \"cat\" or \"mountain\". It all stays on your phone.", "Hanapin din ang mga larawan ayon sa laman, gaya ng \"pusa\" o \"bundok\". Sa phone mo lang ito.")
+    val looksTurnOn = t("Turn on · 150 MB", "I-on · 150 MB")
+    val looksRetry = t("Try again", "Subukan ulit")
+    val looksFailed = t("Couldn't get the picture search model. Check your connection.", "Hindi makuha ang model ng paghahanap. I-check ang connection mo.")
+    fun looksGetting(p: Int) = t("Getting the picture search model… $p%", "Kinukuha ang model ng paghahanap… $p%")
+    fun looksLooking(done: Int, of: Int) = t("Looking through your photos: $done of $of. Search covers those so far.", "Tinitingnan ang mga larawan mo: $done sa $of. Kasama na ang mga iyon sa paghahanap.")
+    val driveCantReach = t("Can't reach Google Drive. Check your connection.", "Hindi maabot ang Google Drive. I-check ang connection mo.")
     fun queuedToDrive(n: Int) = t("Backing up ${files(n)} to Drive", "Bina-backup ang ${files(n)} sa Drive")
     val autoBackup = t("Back up on its own", "Kusang mag-backup")
     val ruleOff = t("Off", "Off")

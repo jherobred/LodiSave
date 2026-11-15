@@ -31,6 +31,8 @@ data class Saved(
     val uri: Uri, val name: String, val mime: String, val bytes: Long, val added: Long,
     val id: Long = 0, val width: Int = 0, val height: Int = 0, val duration: Long = 0,
     val path: String = "", val favorite: Boolean = false, val trashed: Boolean = false,
+    /** Drive's id for a file that's only in Google Drive, not on the phone; "" for the phone's own. */
+    val cloud: String = "",
 ) {
     /** The album it's in, a folder inside LodiSave's, or "" for none. */
     val album get() = path.substringAfter("/LodiSave/", "").trimEnd('/')

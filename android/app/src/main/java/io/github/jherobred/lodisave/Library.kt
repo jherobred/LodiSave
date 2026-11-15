@@ -326,6 +326,7 @@ fun Library(
     var menu by remember { mutableStateOf<Long?>(null) } // the tile a hold opened the menu of
     var folderMenu by remember { mutableStateOf<String?>(null) } // the folder chip a hold opened the menu of
     var locking by remember { mutableStateOf<List<Saved>?>(null) }
+    var sharing by remember { mutableStateOf<List<Saved>?>(null) }
     var tagging by remember { mutableStateOf<List<Saved>?>(null) }
     var more by remember { mutableStateOf(false) }
     var unlocking by remember { mutableStateOf<Locks.Entry?>(null) }
@@ -348,19 +349,28 @@ fun Library(
     val apps = remember(media) { media.mapNotNull { sourceOf(it.name) }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key } }
     val tagNames = remember(tagsOf) { tagsOf.values.flatten().distinct().sorted() }
     val hidden = remember(changes) { Prefs(ctx).hiddenFromHome }
-    val list = remember(media, bin, filter, sort, query, album, tagsOf) {
-        (if (trash) bin else media)
+    // Pictures that look like the search words, id to how well, for the words they were found for.
+    var looks by remember { mutableStateOf("" to emptyMap<Long, Float>()) }
+    LaunchedEffect(query, Looks.ready, Looks.done / 40) {
+        delay(250)
+        val q = query.trim()
+        looks = if (q.isEmpty() || !Looks.ready) "" to emptyMap() else q to withContext(Dispatchers.Default) { runCatching { Looks.find(ctx, q) }.getOrDefault(emptyMap()) }
+    }
+    val list = remember(media, bin, filter, sort, query, album, tagsOf, looks) {
+        val inView = (if (trash) bin else media)
             .filter { trash || album == null || (if (gallery) it.path else it.album) == album }
             .filter {
                 when {
                     filter == "fav" -> it.favorite
                     filter == "all" || filter == "trash" -> true
                     filter == "locked" -> false
+                    filter == "drive" -> it.cloud.isNotEmpty()
                     filter.startsWith("from:") -> sourceOf(it.name) == filter.drop(5)
                     filter.startsWith("tag:") -> filter.drop(4) in tagsOf["${it.id}"].orEmpty()
                     else -> it.kind == filter
                 }
             }
+        val named = inView
             .filter { q -> query.isBlank() || q.name.contains(query.trim(), ignoreCase = true) || tagsOf["${q.id}"].orEmpty().any { it.contains(query.trim(), ignoreCase = true) } }
             .let { l ->
                 when (sort) {
@@ -370,6 +380,10 @@ fun Library(
                     else -> l
                 }
             }
+        // Then the pictures that look like the words though nothing about them says so, best first.
+        val (words, hits) = looks
+        if (trash || query.isBlank() || words != query.trim()) named
+        else named.map { it.id }.toHashSet().let { has -> named + inView.filter { it.id !in has && it.id in hits }.sortedByDescending { hits[it.id] } }
     }
     val chosen = list.filter { it.id in picked }
     // A file the viewer moved on to, back into view, before the grid draws so it can fly back into its tile.
@@ -418,7 +432,7 @@ fun Library(
                             cursorBrush = SolidColor(t.accent),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             keyboardActions = KeyboardActions(onSearch = {}),
-                            decorationBox = { field -> if (query.isEmpty()) Text(copy.search, color = t.muted, fontFamily = Geist, fontSize = 15.sp); field() },
+                            decorationBox = { field -> if (query.isEmpty()) Text(if (Looks.ready) copy.searchLooks else copy.search, color = t.muted, fontFamily = Geist, fontSize = 15.sp); field() },
                         )
                     } else Column(Modifier.weight(1f).padding(start = 4.dp)) {
                         Text(if (trash) copy.trash else album?.let(label) ?: if (gallery) copy.gallery else copy.library,
@@ -441,10 +455,12 @@ fun Library(
                 }
             }
 
+            if (searching && query.isNotBlank() && picked.isEmpty()) LooksBar(copy) { Looks.setup(ctx) }
             top()
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // The Gallery shows photos and videos, so it has no audio.
                 val keys = (if (gallery) FILTERS - "audio" else FILTERS) + (if (entries.isNotEmpty() || filter == "locked") listOf("locked") else emptyList()) +
+                    (if (media.any { it.cloud.isNotEmpty() } || filter == "drive") listOf("drive") else emptyList()) +
                     apps.map { "from:$it" } + tagNames.map { "tag:$it" }
                 items(keys) { key ->
                     val label = when {
@@ -455,6 +471,7 @@ fun Library(
                         key == "fav" -> copy.favorites
                         key == "trash" -> copy.trash
                         key == "locked" -> copy.locked
+                        key == "drive" -> copy.inDrive
                         key.startsWith("from:") -> key.drop(5)
                         key.startsWith("tag:") -> "#${key.drop(4)}"
                         else -> copy.all
@@ -463,6 +480,7 @@ fun Library(
                         key == "fav" -> Glyph.Heart
                         key == "trash" -> Glyph.Trash
                         key == "locked" -> Glyph.Lock
+                        key == "drive" -> Glyph.Cloud
                         key.startsWith("from:") -> Glyph.Link
                         key.startsWith("tag:") -> Glyph.Tag
                         else -> null
@@ -591,8 +609,15 @@ fun Library(
                             scope.launch { done(copy.deleted(these.size - Library.each(these) { Library.delete(ctx, it) })) }
                         }
                     }
+                } else if (chosen.any { it.cloud.isNotEmpty() }) {
+                    // Files only in Drive can come back to the phone; the rest waits until they're here.
+                    Act(Glyph.Saves, copy.download) {
+                        val these = chosen.filter { it.cloud.isNotEmpty() }
+                        picked = emptyList()
+                        downloadFromDrive(scope, ctx, copy, these, ::done)
+                    }
                 } else {
-                    Act(Glyph.Share, copy.share) { share(ctx, chosen) }
+                    Act(Glyph.Share, copy.share) { sharing = chosen }
                     // Into the LodiSave folder in the user's Google Drive, once Drive is connected.
                     Act(Glyph.Cloud, copy.toDrive) {
                         val these = chosen
@@ -649,6 +674,7 @@ fun Library(
         }
     }
     asking?.let { ask -> Confirm(copy, ask.question, { asking = null }) { asking = null; ask.yes() } }
+    sharing?.let { these -> ShareConfirm(copy, these, { sharing = null }) { sharing = null; share(ctx, these) } }
     locking?.let { these ->
         LockDialog(copy, these, { locking = null }) { message -> locking = null; picked = emptyList(); done(message) }
     }
@@ -718,6 +744,19 @@ fun TagDialog(copy: Copy, items: List<Saved>, onDismiss: () -> Unit, onDone: (St
         },
         containerColor = t.surface, shape = RoundedCornerShape(28.dp),
     )
+}
+
+/** Brings files that are only in Drive back onto the phone, saying how it went. */
+fun downloadFromDrive(scope: CoroutineScope, ctx: Context, copy: Copy, items: List<Saved>, done: (String, (suspend () -> Unit)?) -> Unit) {
+    scope.launch {
+        done(copy.downloading(items.size), null)
+        val failed = withContext(Dispatchers.IO) {
+            val token = Drive.quickToken(ctx) ?: return@withContext items.size
+            items.count { item -> runCatching { Drive.download(ctx, token, item) }.onFailure { android.util.Log.w("LodiDrive", "${item.name}: $it") }.isFailure }
+        }
+        Library.changed()
+        done(if (failed > 0) copy.notDone(failed) else copy.downloaded(items.size), null)
+    }
 }
 
 /** Moves files to the trash and offers Undo, which brings them back. */
@@ -822,7 +861,7 @@ private fun Tile(
             Box(Modifier.fillMaxSize().background(t.soft).clickable(press, null, onClick = onClick)) {
                 if (thumb != null) Image(thumb, item.name, if (veiled) Modifier.fillMaxSize().blur(24.dp, BlurredEdgeTreatment.Rectangle) else Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 else if (item.kind == "audio") GlyphIcon(Glyph.Music, Modifier.align(Alignment.Center), t.muted, 34.dp)
-                if (!veiled) Loop(item, Modifier.fillMaxSize())
+                if (!veiled) { if (item.cloud.isEmpty()) Loop(item, Modifier.fillMaxSize()) }
                 // Android 11 and older can't blur, so the tile is covered instead.
                 else Box(Modifier.fillMaxSize().background(if (Build.VERSION.SDK_INT < 31) t.soft else Color.Transparent)) {
                     GlyphIcon(Glyph.EyeOff, Modifier.align(Alignment.Center).clip(CircleShape).background(Color.Black.copy(alpha = 0.35f)).padding(8.dp), Color.White, 22.dp)
@@ -856,8 +895,31 @@ private fun BoxScope.Badges(item: Saved, offHome: Boolean) {
                 color = Color.White, fontFamily = Geist, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.weight(1f))
+        if (item.cloud.isNotEmpty()) GlyphIcon(Glyph.Cloud, Modifier.clip(CircleShape).background(shade).padding(3.dp), Color.White, 18.dp)
         if (offHome) GlyphIcon(Glyph.EyeOff, Modifier.clip(CircleShape).background(shade).padding(3.dp), Color.White, 18.dp)
         if (item.favorite) GlyphIcon(Glyph.HeartFull, Modifier.clip(CircleShape).background(shade).padding(3.dp), Color.White, 18.dp)
+    }
+}
+
+/** Under the search field: an offer to find photos by what's in them, getting the model, or how many
+ *  photos it has looked at so far. Nothing once it's done. */
+@Composable
+private fun LooksBar(copy: Copy, onTurnOn: () -> Unit) {
+    val t = LocalTokens.current
+    val getting = Looks.getting
+    val text = when {
+        getting != null -> copy.looksGetting((getting * 100).toInt())
+        !Looks.ready -> if (Looks.failed) copy.looksFailed else copy.looksOffer
+        Looks.done < Looks.total -> copy.looksLooking(Looks.done, Looks.total)
+        else -> return
+    }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clip(RoundedCornerShape(14.dp)).background(t.surface).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GlyphIcon(Glyph.Search, tint = t.muted, size = 18.dp)
+            Text(text, Modifier.weight(1f), fontFamily = Geist, fontSize = 13.sp, color = t.muted)
+            if (getting == null && !Looks.ready) Pill(if (Looks.failed) copy.looksRetry else copy.looksTurnOn, onTurnOn)
+        }
+        if (getting != null) Meter(getting * 100)
     }
 }
 
@@ -926,6 +988,42 @@ fun Confirm(copy: Copy, question: String, onDismiss: () -> Unit, yes: String = c
         confirmButton = { Pill(yes, onYes) },
         dismissButton = { Pill(copy.cancel, onDismiss, primary = false) },
         text = { Text(question, fontFamily = Geist, fontSize = 15.sp, color = t.ink) },
+        containerColor = t.surface,
+        shape = RoundedCornerShape(28.dp),
+    )
+}
+
+/**
+ * Asks before handing files to another app, as they may be private. Blurred ones also need a tick,
+ * so a quick double tap can't send them. Even then the phone's own share asks which app.
+ */
+@Composable
+fun ShareConfirm(copy: Copy, items: List<Saved>, onDismiss: () -> Unit, onShare: () -> Unit) {
+    val t = LocalTokens.current
+    val veil = rememberVeil()
+    val blurred = items.count(veil)
+    var checked by remember(items) { mutableStateOf(false) }
+    AlertDialog(
+        onDismiss,
+        confirmButton = { Pill(copy.share, onShare, enabled = blurred == 0 || checked) },
+        dismissButton = { Pill(copy.cancel, onDismiss, primary = false) },
+        title = { Text(copy.shareWhat(items.size), fontFamily = Geist, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = t.ink) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (blurred > 0) {
+                    Text(copy.shareBlurred(blurred, items.size), fontFamily = Geist, fontSize = 15.sp, color = t.bad)
+                    Row(Modifier.clip(RoundedCornerShape(12.dp)).clickable { checked = !checked }.padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.size(22.dp).clip(CircleShape).background(if (checked) t.accent else Color.Transparent)
+                            .border(2.dp, if (checked) t.accent else t.muted, CircleShape), contentAlignment = Alignment.Center) {
+                            if (checked) GlyphIcon(Glyph.Check, tint = t.accentInk, size = 15.dp)
+                        }
+                        Text(copy.shareChecked, fontFamily = Geist, fontSize = 14.sp, color = t.ink)
+                    }
+                }
+                Text(copy.shareNext, fontFamily = Geist, fontSize = 14.sp, color = t.muted)
+            }
+        },
         containerColor = t.surface,
         shape = RoundedCornerShape(28.dp),
     )

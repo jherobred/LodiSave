@@ -14,6 +14,8 @@ mod library;
 mod links;
 mod mp4;
 mod recovery;
+mod search;
+mod share;
 mod thumb;
 
 use drive::Drive;
@@ -410,6 +412,46 @@ struct GalleryList {
     saves: PathBuf,
     backed: Vec<String>,
     ffmpeg: bool,
+    /// Files only on Google Drive, as tiles like the rest.
+    cloud: Vec<CloudEntry>,
+}
+
+/// A file only on Google Drive, with the gallery's own fields. Its path is made up, so nothing that
+/// takes a real file can reach it; `cloud` is its id on Drive. One sent from this PC keeps the folder,
+/// favorite, blur and tags it had here.
+#[derive(Serialize)]
+struct CloudEntry {
+    path: String,
+    name: String,
+    dir: PathBuf,
+    kind: &'static str,
+    bytes: u64,
+    modified: u64,
+    fav: bool,
+    blur: bool,
+    tags: Vec<String>,
+    cloud: String,
+}
+
+fn cloud_entries(app: &AppHandle) -> Vec<CloudEntry> {
+    let g = app.state::<Gallery>();
+    app.state::<Drive>()
+        .only_in_cloud()
+        .into_iter()
+        .filter_map(|(c, from)| {
+            let kind = library::kind(&c.name).or(match c.mime.split('/').next() {
+                Some("image") => Some("image"),
+                Some("video") => Some("video"),
+                Some("audio") => Some("audio"),
+                _ => None,
+            })?;
+            let meta = from.as_ref().map(|p| g.store.get(&gallery::key(p))).unwrap_or_default();
+            let dir = from.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+            // As in the gallery, a blurred folder blurs what was in it.
+            let blur = meta.blur || dir.ancestors().any(|d| !d.as_os_str().is_empty() && g.store.get(&gallery::key(d)).blur);
+            Some(CloudEntry { path: format!(r"drive:\{}\{}", c.id, c.name), name: c.name, dir, kind, bytes: c.bytes, modified: c.modified, fav: meta.fav, blur, tags: meta.tags, cloud: c.id })
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -417,10 +459,55 @@ async fn gallery(app: AppHandle) -> Result<GalleryList, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let g = app.state::<Gallery>();
         let (items, folders) = g.list();
-        GalleryList { roots: g.roots(), items, folders, saves: save_dir(&app), backed: app.state::<Drive>().backed(), ffmpeg: library::ffmpeg() }
+        let cloud = cloud_entries(&app);
+        want_searched(&app, &items, &cloud);
+        GalleryList { roots: g.roots(), items, folders, saves: save_dir(&app), backed: app.state::<Drive>().backed(), ffmpeg: library::ffmpeg(), cloud }
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Tells search what the gallery shows, so it works out the pictures and videos not done yet, once
+/// the model is here.
+fn want_searched(app: &AppHandle, items: &[gallery::Entry], cloud: &[CloudEntry]) {
+    let search = *app.state::<&'static search::Search>();
+    let pictures = |kind: &str| matches!(kind, "image" | "gif" | "video");
+    let mut want: Vec<_> = items
+        .iter()
+        .filter(|e| pictures(e.kind))
+        .map(|e| (e.path.to_string_lossy().into_owned(), (e.bytes, e.modified), search::Source::File(e.path.clone())))
+        .collect();
+    want.extend(cloud.iter().filter(|c| pictures(c.kind)).map(|c| (c.path.clone(), (c.bytes, c.modified), search::Source::Cloud(c.cloud.clone()))));
+    search.want(want);
+    if search.ready() {
+        start_search(app);
+    }
+}
+
+fn start_search(app: &AppHandle) {
+    let handle = app.clone();
+    app.state::<&'static search::Search>().start(move |id| {
+        let r = handle.state::<Drive>().serve(id, Some(448), None);
+        (r.status() == 200).then(|| r.into_body())
+    });
+}
+
+#[tauri::command]
+fn search_state(search: State<&'static search::Search>) -> search::Status {
+    search.status()
+}
+
+/// Turns on finding pictures by what's in them: gets the model, about 150 MB, then works out the
+/// gallery's pictures in the background.
+#[tauri::command]
+fn search_setup(app: AppHandle) {
+    start_search(&app);
+}
+
+/// The gallery's pictures that look like `query`, best first.
+#[tauri::command]
+async fn search_find(app: AppHandle, query: String) -> Result<Vec<(String, f32)>, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<&'static search::Search>().find(&query)).await.map_err(|e| e.to_string())?
 }
 
 /// Adds a folder to the gallery: `path`, or one picked in the Windows folder picker when it is
@@ -593,6 +680,26 @@ async fn allow_protected() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(defender::allow).await.map_err(|e| e.to_string())?
 }
 
+/// Shares files through Windows' Share window, once the gallery's Share sheet was confirmed. Locked
+/// files never go: they'd arrive scrambled.
+#[tauri::command]
+async fn g_share(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
+    let files = paths.iter().map(|p| inside(&app, p)).collect::<Result<Vec<_>, _>>()?;
+    if files.is_empty() || files.iter().any(|f| gallery::locked(f)) {
+        return Err("gone".into());
+    }
+    let hwnd = app.get_webview_window("gallery").and_then(|w| w.hwnd().ok()).map_or(0, |h| h.0 as isize);
+    let title = match &files[..] {
+        [one] => one.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        many => format!("{} files", many.len()),
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let paths = files.iter().map(|f| HSTRING::from(f.as_os_str())).collect();
+    app.run_on_main_thread(move || drop(tx.send(share::show(hwnd, paths, HSTRING::from(title)).map_err(|e| e.message()))))
+        .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || rx.recv().unwrap_or_else(|_| Err("blocked".into()))).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn g_wallpaper(app: AppHandle, path: String) -> Result<(), String> {
     gallery::wallpaper(&inside(&app, &path)?)
@@ -642,6 +749,39 @@ async fn drive_backup(app: AppHandle, paths: Vec<String>) -> Result<usize, Strin
     let files = paths.iter().map(|p| inside(&app, p)).collect::<Result<Vec<_>, _>>()?;
     app.state::<Drive>().queue(files);
     tauri::async_runtime::spawn_blocking(move || back_up(&app)).await.map_err(|e| e.to_string())?
+}
+
+/// Asks Drive again what LodiSave has there. Returns how many files.
+#[tauri::command]
+async fn drive_cloud(app: AppHandle) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Drive>().refresh_cloud()).await.map_err(|e| e.to_string())?
+}
+
+/// Brings files only on Drive back to this PC: to the folder each was backed up from, when it's still
+/// there and in the gallery or the save folder, else to the save folder. Returns how many came back.
+#[tauri::command]
+async fn drive_get(app: AppHandle, ids: Vec<String>) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let drive = app.state::<Drive>();
+        let gallery = app.state::<Gallery>();
+        let home = save_dir(&app);
+        let same = |a: &Path, b: &Path| a.as_os_str().eq_ignore_ascii_case(b.as_os_str());
+        let shown = |d: &Path| {
+            d.is_dir() && (same(d, &home) || library::within(&home, &d.to_string_lossy()).is_ok() || gallery.check(&d.to_string_lossy()).is_ok() || gallery.roots().iter().any(|r| same(r, d)))
+        };
+        let only = drive.only_in_cloud();
+        let (mut got, mut last) = (0, Err("gone".to_string()));
+        for id in &ids {
+            let Some((c, from)) = only.iter().find(|(c, _)| &c.id == id) else { continue };
+            let dir = from.as_ref().and_then(|p| p.parent()).filter(|d| shown(d)).map(Path::to_path_buf).unwrap_or_else(|| home.clone());
+            let _ = std::fs::create_dir_all(&dir);
+            last = drive.download(id, &dir.join(&c.name)).map(drop);
+            got += usize::from(last.is_ok());
+        }
+        if got == 0 { last.map(|_| 0) } else { Ok(got) }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -852,6 +992,14 @@ fn main() {
                 responder.respond(res.unwrap());
             });
         })
+        // Thumbnails and files of what's only on Google Drive, for files LodiSave listed there only.
+        .register_asynchronous_uri_scheme_protocol("cloud", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let id = request.uri().path().trim_start_matches('/').to_string();
+            let px = request.uri().query().and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("s="))).and_then(|s| s.parse::<u32>().ok()).map(|s| s.clamp(64, 1024));
+            let range = request.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
+            std::thread::spawn(move || responder.respond(app.state::<Drive>().serve(&id, px, range.as_deref())));
+        })
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -880,6 +1028,8 @@ fn main() {
             app.manage(gallery);
             app.manage(Drive::open(&data));
             app.manage(Recovery::open(&data));
+            // Lives as long as LodiSave, for its thread.
+            app.manage(&*Box::leak(Box::new(search::Search::open(&data))));
             // The daily backup, while a rule or freeing space is on, once a game is over.
             let backup = handle.clone();
             std::thread::spawn(move || {
@@ -973,6 +1123,7 @@ fn main() {
             g_restore,
             g_duplicates,
             g_wallpaper,
+            g_share,
             g_lock_write,
             g_lock_drop,
             g_relock,
@@ -992,6 +1143,11 @@ fn main() {
             drive_disconnect,
             drive_rules,
             drive_backup,
+            drive_cloud,
+            drive_get,
+            search_state,
+            search_setup,
+            search_find,
             open_path,
             reveal,
             open_folder,
