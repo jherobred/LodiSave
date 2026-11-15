@@ -16,8 +16,8 @@ android {
         applicationId = "io.github.jherobred.lodisave"
         minSdk = 29
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.4.0"
+        versionCode = 13
+        versionName = "0.4.1"
         // Phones, plus x86_64 for the emulator. Each ABI carries its own copy of Python, so a quick
         // emulator build can pass -Plodi.abis=x86_64.
         ndk {

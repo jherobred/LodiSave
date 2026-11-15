@@ -65,12 +65,26 @@ class ShareActivity : ComponentActivity() {
     /** A shared file being copied, or a share with nothing to save. */
     private val local = mutableStateOf<Job?>(null)
     private var started = false
+    /** A tap on the floating Lodi or the widget saves with no card: nothing shows unless it must. */
+    private val quiet = mutableStateOf(false)
+    /** A link saved before, waiting for "Save again", and whether its save would be quiet. */
+    private val ask = mutableStateOf<String?>(null)
+    private var askQuiet = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         savedInstanceState?.getStringArrayList("saves")?.mapTo(saves, UUID::fromString)
         started = savedInstanceState?.getBoolean("started") == true
-        setContent { LodiTheme { Floating(saves, local.value, ::pick, ::promote, ::again, ::finish) } }
+        quiet.value = !started && intent.getBooleanExtra(EXTRA_CLIPBOARD, false)
+        setContent {
+            LodiTheme {
+                val link = ask.value
+                when {
+                    link != null -> AskAgain(copy = remember { Copy.of(this) }, save = { ask.value = null; save(link, askQuiet) }, cancel = { ask.value = null; doneIfEmpty() })
+                    !quiet.value -> Floating(saves, local.value, ::pick, ::promote, ::again, ::finish)
+                }
+            }
+        }
         if (!started && !intent.getBooleanExtra(EXTRA_CLIPBOARD, false)) start()
     }
 
@@ -85,6 +99,7 @@ class ShareActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         started = false
+        if (saves.isEmpty() && local.value == null && ask.value == null) quiet.value = intent.getBooleanExtra(EXTRA_CLIPBOARD, false)
         if (!intent.getBooleanExtra(EXTRA_CLIPBOARD, false)) start()
         else if (hasWindowFocus()) onWindowFocusChanged(true) // no focus change will come to read the clipboard
     }
@@ -96,7 +111,12 @@ class ShareActivity : ComponentActivity() {
         if (!hasFocus || started || !intent.getBooleanExtra(EXTRA_CLIPBOARD, false)) return
         started = true
         val url = copiedLink(this)
-        if (url == null) local.value = Job.Failed("nolink") else follow(url)
+        if (url == null) { quiet.value = false; local.value = Job.Failed("nolink") } else follow(url, quietly = true)
+    }
+
+    /** Closes when nothing is left to show, as after a quiet save or a "no" to saving again. */
+    private fun doneIfEmpty() {
+        if (saves.isEmpty() && local.value == null) finish()
     }
 
     private fun start() {
@@ -104,6 +124,7 @@ class ShareActivity : ComponentActivity() {
         // Saves the picker started in another app, to follow here.
         intent.getStringArrayExtra(EXTRA_WORKS)?.let { ids ->
             local.value = null
+            quiet.value = false
             ids.mapTo(saves, UUID::fromString)
             return
         }
@@ -134,9 +155,24 @@ class ShareActivity : ComponentActivity() {
         }
     }
 
-    private fun follow(url: String) {
-        local.value = null
-        saves += SaveWorker.enqueue(this, url)
+    /** Saves a link, asking first when it was saved before. */
+    private fun follow(url: String, quietly: Boolean = false) {
+        if (SavedLinks.has(this, url)) {
+            askQuiet = quietly
+            ask.value = url
+        } else save(url, quietly)
+    }
+
+    private fun save(url: String, quietly: Boolean) {
+        if (!quietly) {
+            local.value = null
+            saves += SaveWorker.enqueue(this, url)
+            return
+        }
+        // Progress and the result come as notifications, so the card stays away.
+        SaveWorker.enqueue(this, url, notify = true)
+        android.widget.Toast.makeText(this, Copy.of(this).notification, android.widget.Toast.LENGTH_SHORT).show()
+        doneIfEmpty()
     }
 
     /** Saves a link again in place of the save that tried it, as after signing in. */
@@ -239,6 +275,29 @@ private fun Sheet(saves: List<UUID>, local: Job?, copy: Copy, motion: Boolean, p
             }
             // Lodi floats over the top edge of the card, the way the design shows him over the share sheet.
             Lodi(look(main, copy, mainLink).pose, Modifier.size(104.dp).align(Alignment.TopCenter), motion)
+        }
+    }
+}
+
+/** A link saved before: save it again, or leave it. */
+@Composable
+private fun AskAgain(copy: Copy, save: () -> Unit, cancel: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val motion = remember { Prefs(ctx).motion } && !Gaming.on
+    CompositionLocalProvider(LocalMotion provides motion) {
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)).clickable(remember { MutableInteractionSource() }, null, onClick = cancel),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Card(Modifier.navigationBarsPadding().padding(16.dp).clickable(remember { MutableInteractionSource() }, null) {}) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Header(Look(Pose.Grab, copy.againTitle, copy.againSub), motion)
+                    Actions {
+                        Pill(copy.cancel, cancel, Modifier.weight(1f), primary = false)
+                        Pill(copy.againSave, save, Modifier.weight(1f))
+                    }
+                }
+            }
         }
     }
 }

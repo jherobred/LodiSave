@@ -988,6 +988,7 @@ const PAGES = [
   ['windows', 'Windows permissions', 'shield'],
   ['repair', 'Repair videos', 'refresh'],
   ['search', 'Search', 'search'],
+  ['update', 'Updates', 'get'],
 ];
 let prefsPage = 'general';
 
@@ -1056,6 +1057,7 @@ async function prefsSections(page) {
   if (page === 'recovery') return [psec('Password recovery', prow('Authenticator app', 'A 6-digit code opens a locked file when its password is forgotten.'), wide(await recoveryBox()))];
   if (page === 'windows') return [psec('Windows permissions', wide(await permissionsBox()))];
   if (page === 'search') return [psec("Find photos by what's in them", prow('Search inside photos and videos', 'Type "cat", "mountain" or "pusa" and see cats, mountains and cats, whatever the files are called. A picture model, CLIP, looks at each one here on this PC; nothing about your photos or your searches leaves it. Getting the model is a one-time 150 MB download.'), wide(looksBox(true)))];
+  if (page === 'update') return [psec('Updates', updateRow())];
   const status = el('small', 'note');
   const go2 = el('button', 'pill small primary', { type: 'button', textContent: 'Repair' });
   go2.onclick = async () => {
@@ -1068,6 +1070,34 @@ async function prefsSections(page) {
   const r = prow('Repair videos saved by older versions', "Fixes sound that runs ahead of or behind the picture, clips that repeat, and wrong lengths or out-of-step sound in Windows' own player, in videos LodiSave saved from streaming sites before. Each original goes to the Recycle Bin.", go2);
   r.querySelector('.ptext').append(status);
   return [psec('Repair videos', r)];
+}
+// Check GitHub for a newer LodiSave, then download, check and install it in one go.
+function updateRow() {
+  const status = el('small', 'note');
+  const go = el('button', 'pill small primary', { type: 'button', textContent: 'Check for updates' });
+  const failed = { offline: "Couldn't reach GitHub. Check your connection and try again.", corrupt: "The download didn't match its checksum, so it wasn't installed. Try again.", blocked: "Windows wouldn't let LodiSave replace its own file. Move the portable exe to a folder you can write to.", nosums: "That release has no checksums, so it wasn't installed.", noupdate: 'That release has no file for this copy.' };
+  let found = false;
+  go.onclick = async () => {
+    go.disabled = true;
+    try {
+      if (!found) {
+        status.textContent = 'Checking…';
+        const u = await invoke('update_check');
+        found = u.newer;
+        status.textContent = found ? `Version ${u.latest} is out. You have ${u.current}.` : `You have the newest version, ${u.current}.`;
+        if (found) go.textContent = `Update to ${u.latest}`;
+      } else {
+        status.textContent = 'Downloading… LodiSave restarts by itself when it is done.';
+        await invoke('update_install');
+      }
+    } catch (e) {
+      status.textContent = failed[e] ?? `Couldn't update (${e}).`;
+    }
+    go.disabled = false;
+  };
+  const r = prow('Download updates', 'LodiSave checks its GitHub releases, downloads the new version, checks the file and installs it. Your saves and settings stay.', go);
+  r.querySelector('.ptext').append(status);
+  return r;
 }
 const wide = (node) => { const r = el('div', 'prow wide'); r.append(node); return r };
 

@@ -19,6 +19,8 @@
     <!-- Background sounds play on with the screen off, until the user stops them. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Settings › Update installs the newest release from GitHub; Android asks first. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Gaming mode reads the category of the app in front, which Android 11 and up hides unless
          LodiSave says which apps it looks at: the ones in the launcher. -->
@@ -82,6 +84,11 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- Android's installer reports an update's progress here. -->
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".SaveWidget"

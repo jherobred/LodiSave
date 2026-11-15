@@ -17,6 +17,7 @@ mod recovery;
 mod search;
 mod share;
 mod thumb;
+mod update;
 
 use drive::Drive;
 use gallery::Gallery;
@@ -701,6 +702,17 @@ async fn g_share(app: AppHandle, paths: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn update_check(app: AppHandle) -> Result<serde_json::Value, String> {
+    let current = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || update::check(&current)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn update_install(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || update::install(&app)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn g_wallpaper(app: AppHandle, path: String) -> Result<(), String> {
     gallery::wallpaper(&inside(&app, &path)?)
 }
@@ -974,6 +986,7 @@ fn main() {
     if host::launched(&args) {
         return host::run(&args);
     }
+    update::tidy();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| on_launch(app, &args)))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--background"])))
@@ -1144,6 +1157,8 @@ fn main() {
             drive_rules,
             drive_backup,
             drive_cloud,
+            update_check,
+            update_install,
             drive_get,
             search_state,
             search_setup,

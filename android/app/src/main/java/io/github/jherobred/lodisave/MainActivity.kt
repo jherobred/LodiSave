@@ -618,10 +618,49 @@ private fun SettingsSheet(
             SettingRow(copy.accounts) { Pill(copy.open, onAccounts, primary = false) }
             Text(copy.accountsHint, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
             Link(copy.showIntro, onIntro)
+            UpdateRow(copy)
             Text("LodiSave ${ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName} · github.com/jherobred/LodiSave", fontFamily = GeistMono, fontSize = 12.sp, color = t.muted,
                 modifier = Modifier.clickable { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/jherobred/LodiSave".toUri())) } })
         }
     }
+}
+
+/** Settings › Updates: check GitHub, then download and install the newest release in place. */
+@Composable
+private fun UpdateRow(copy: Copy) {
+    val ctx = LocalContext.current
+    val t = LocalTokens.current
+    val scope = rememberCoroutineScope()
+    var found by remember { mutableStateOf<Updater.Release?>(null) }
+    var note by remember { mutableStateOf(copy.updateHint) }
+    var busy by remember { mutableStateOf(false) }
+    SettingRow(copy.update) {
+        Pill(found?.let { copy.updateGet(it.version) } ?: copy.updateCheck, {
+            val release = found
+            busy = true
+            scope.launch {
+                note = try {
+                    if (release == null) {
+                        note = copy.updateChecking
+                        found = Updater.check(ctx)
+                        found?.let { copy.updateFound(it.version) } ?: copy.updateNone
+                    } else if (!Updater.allowed(ctx)) {
+                        Updater.askToAllow(ctx)
+                        copy.updateAllow
+                    } else {
+                        Updater.install(ctx, release) { p -> scope.launch { note = copy.updateDownloading(p) } }
+                        copy.updateInstalling
+                    }
+                } catch (e: Failure) {
+                    if (e.code == "corrupt") copy.updateCorrupt else copy.updateOffline
+                } catch (e: Exception) {
+                    copy.updateOffline
+                }
+                busy = false
+            }
+        }, primary = found != null, enabled = !busy)
+    }
+    Text(note, fontFamily = Geist, fontSize = 13.sp, color = t.muted)
 }
 
 @Composable

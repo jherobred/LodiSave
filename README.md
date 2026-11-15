@@ -29,6 +29,12 @@ Right-click blocked, an invisible layer over the picture, a video that only stre
   <br><sub>Click for the full video with sound (37 s).</sub>
 </p>
 
+## What's new in 0.4.1
+
+- **Update from inside the app.** **Settings › Updates** on Windows and Android checks GitHub, downloads the new version, checks it against the release's checksums and installs it. No more downloading each release by hand. Android asks once to let LodiSave install apps.
+- **Tapping the floating Lodi or the widget saves quietly.** No card comes up: a notification shows the progress and then the saved file (tap it to open). A post with several photos or videos still opens the card, so you can pick.
+- **Saving the same link twice asks first** on Android, so you don't end up with duplicates. Counts links saved from this version on, while their files are still on the phone.
+
 ## What's new in 0.4
 
 - **Search by what's in the photo.** Type `cat`, `mountain` or `pusa` on Windows or Android. Matching photos and videos show up even when the file name is nothing like that. A picture model (CLIP) runs on the device. The first time, it downloads about 150 MB and checks each file. Nothing about your photos or your searches is sent anywhere.

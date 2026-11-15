@@ -2,7 +2,10 @@ package io.github.jherobred.lodisave
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.webkit.WebSettings
@@ -83,7 +86,52 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         runCatching { setForegroundAsync(foreground(phase, percent)) }
     }
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+    override suspend fun doWork(): Result = work().also { r ->
+        if (inputData.getBoolean(KEY_NOTIFY, false)) runCatching { tell(r) }
+    }
+
+    /** With no card on screen, the result is a notification. A post with several photos or videos
+     *  opens the card to pick from, or, when Android won't allow that from here, a notification
+     *  that does. */
+    private fun tell(r: Result) {
+        val ctx = applicationContext
+        val copy = Copy.of(ctx)
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        val out = r.outputData
+        val card = Intent(ctx, ShareActivity::class.java).putExtra(ShareActivity.EXTRA_WORKS, arrayOf(id.toString())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        fun cardIntent() = PendingIntent.getActivity(ctx, id.hashCode(), card, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val choose = r is Result.Success && out.keyValueMap.containsKey(KEY_KINDS)
+        if (choose && Settings.canDrawOverlays(ctx) && runCatching { ctx.startActivity(card) }.isSuccess) return
+        val channel = when {
+            Gaming.on -> NotificationChannel(QUIET, copy.quiet, NotificationManager.IMPORTANCE_MIN)
+            choose -> NotificationChannel(PICK, copy.pickNote, NotificationManager.IMPORTANCE_HIGH)
+            else -> NotificationChannel(DONE, copy.savedNote, NotificationManager.IMPORTANCE_DEFAULT).apply { setSound(null, null) }
+        }
+        nm.createNotificationChannel(channel)
+        val note = NotificationCompat.Builder(ctx, channel.id).setSmallIcon(R.drawable.ic_stat_lodi).setAutoCancel(true)
+        when {
+            choose -> note.setContentTitle(copy.pickNote).setContentText(copy.pickNoteSub(out.strings(KEY_KINDS).size)).setContentIntent(cardIntent())
+            r is Result.Success -> {
+                val uris = out.strings(KEY_URIS)
+                val names = out.strings(KEY_NAMES)
+                note.setContentTitle(copy.savedNote).setContentText(names.firstOrNull().orEmpty() + if (names.size > 1) " +${names.size - 1}" else "")
+                uris.firstOrNull()?.let { uri ->
+                    val view = Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(uri), out.strings(KEY_MIMES).firstOrNull().orEmpty().ifEmpty { "*/*" })
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    note.setContentIntent(PendingIntent.getActivity(ctx, id.hashCode(), view, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+                }
+            }
+            else -> {
+                val url = out.getString(KEY_URL).orEmpty()
+                val site = Site.of(url)
+                val (title, sub) = copy.error(out.getString(KEY_ERROR) ?: "nothing", site?.label, site?.signedIn() == true)
+                note.setContentTitle(title).setContentText(sub).setStyle(NotificationCompat.BigTextStyle().bigText(sub)).setContentIntent(cardIntent())
+            }
+        }
+        nm.notify(id.hashCode() + 1, note.build())
+    }
+
+    private suspend fun work(): Result = withContext(Dispatchers.IO) {
         val url = inputData.getString(KEY_URL) ?: return@withContext Result.failure(workDataOf(KEY_ERROR to "nothing"))
         val pick = inputData.getString(KEY_PICK)
         // The picker's shots of what it saw on screen, saved instead when the link gives nothing.
@@ -95,6 +143,7 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         val thumbs = File(ctx.cacheDir, "thumbs").apply { listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 86_400_000 }?.forEach { it.deleteRecursively() } }
         fun saved(files: List<File>, failed: Int): Result {
             val uris = files.map { Saver.publish(ctx, it) }
+            if (url.isNotEmpty()) SavedLinks.add(ctx, url, uris)
             return Result.success(workDataOf(
                 KEY_URL to url,
                 KEY_URIS to uris.map(Uri::toString).toTypedArray(),
@@ -157,6 +206,9 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
     companion object {
         const val CHANNEL = "saving"
         const val QUIET = "saving-quiet"
+        const val DONE = "saved"
+        const val PICK = "pick"
+        const val KEY_NOTIFY = "notify"
         const val TAG = "save"
         const val KEY_URL = "url"
         const val KEY_PICK = "pick"
@@ -178,9 +230,9 @@ class SaveWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
          *  several asks which to save. `file` says the link is a photo or video file itself, found on
          *  the web `page`, saved as `name` when given. `shots` save instead when the link gives nothing,
          *  or when there's no link (an empty one). Saves run side by side. */
-        fun enqueue(ctx: Context, url: String, pick: String? = null, file: Boolean = false, page: String? = null, shots: List<File> = emptyList(), name: String? = null): UUID {
+        fun enqueue(ctx: Context, url: String, pick: String? = null, file: Boolean = false, page: String? = null, shots: List<File> = emptyList(), name: String? = null, notify: Boolean = false): UUID {
             val request = OneTimeWorkRequestBuilder<SaveWorker>()
-                .setInputData(workDataOf(KEY_URL to url, KEY_PICK to pick, KEY_FILE to file, KEY_PAGE to page, KEY_SHOTS to shots.map(File::getPath).toTypedArray(), KEY_NAME to name))
+                .setInputData(workDataOf(KEY_URL to url, KEY_PICK to pick, KEY_FILE to file, KEY_PAGE to page, KEY_SHOTS to shots.map(File::getPath).toTypedArray(), KEY_NAME to name, KEY_NOTIFY to notify))
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag(TAG)
                 .addTag("url:$url")
@@ -211,3 +263,34 @@ fun WorkInfo?.toJob(): Job = when (this?.state) {
 
 /** The link a save is for. */
 val WorkInfo.link: String get() = tags.firstOrNull { it.startsWith("url:") }?.removePrefix("url:").orEmpty()
+
+/**
+ * Links LodiSave has saved, so saving one again asks first. Kept by the link without its tracking
+ * bits, with the files it gave; a link whose files were all deleted counts as not saved.
+ */
+object SavedLinks {
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("saved-links", Context.MODE_PRIVATE)
+
+    /** The same post shared twice often differs only in ?igsh=, ?si= or utm_ bits. */
+    fun key(url: String): String {
+        val u = Uri.parse(url.trim())
+        val host = u.host.orEmpty().lowercase().removePrefix("www.").removePrefix("m.")
+        val v = runCatching { u.getQueryParameter("v") }.getOrNull()
+        return host + u.path.orEmpty().trimEnd('/') + (v?.let { "?v=$it" } ?: "")
+    }
+
+    fun add(ctx: Context, url: String, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val k = key(url)
+        val before = prefs(ctx).getString(k, null)?.split('\n').orEmpty()
+        prefs(ctx).edit().putString(k, (before + uris.map(Uri::toString)).distinct().takeLast(50).joinToString("\n")).apply()
+    }
+
+    /** Whether this link was saved before and at least one of its files is still there. */
+    fun has(ctx: Context, url: String): Boolean {
+        val stored = prefs(ctx).getString(key(url), null) ?: return false
+        return stored.split('\n').any { s ->
+            runCatching { ctx.contentResolver.query(Uri.parse(s), arrayOf(android.provider.MediaStore.MediaColumns._ID), null, null, null)?.use { it.count > 0 } }.getOrNull() == true
+        }
+    }
+}
